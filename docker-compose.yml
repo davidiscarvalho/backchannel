@@ -26,13 +26,13 @@ services:
       app:
         condition: service_healthy
 
-  # frontend:  # v2 UI — item10
-  #   build:
-  #     context: ./ui
-  #   ports:
-  #     - "3000:80"
-  #   depends_on:
-  #     - app
+  frontend:
+    build:
+      context: ./ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - app
 
 volumes:
   backchannel_data:
