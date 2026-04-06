@@ -1,0 +1,38 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - backchannel_data:/data
+    environment:
+      BACKCHANNEL_DEPOT_INTROSPECTION_URL: ${BACKCHANNEL_DEPOT_INTROSPECTION_URL:-}
+      BACKCHANNEL_DEPOT_SERVICE_TOKEN: ${BACKCHANNEL_DEPOT_SERVICE_TOKEN:-}
+      BACKCHANNEL_DEPOT_BACKCHANNEL_URL: ${BACKCHANNEL_DEPOT_BACKCHANNEL_URL:-https://the-api-depot.example/backchannel}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: .
+    command: ["python", "-m", "backchannel", "worker", "--db", "/data/backchannel.db", "--interval", "86400"]
+    volumes:
+      - backchannel_data:/data
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # frontend:  # v2 UI — item10
+  #   build:
+  #     context: ./ui
+  #   ports:
+  #     - "3000:80"
+  #   depends_on:
+  #     - app
+
+volumes:
+  backchannel_data:
