@@ -158,6 +158,18 @@ class BackchannelStore:
                 CREATE INDEX IF NOT EXISTS idx_channel_invitations_expiry
                     ON channel_invitations(expires_at);
 
+                CREATE TABLE IF NOT EXISTS channel_members (
+                    id TEXT PRIMARY KEY,
+                    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                    key_id TEXT NOT NULL,
+                    granted_at TEXT NOT NULL,
+                    granted_via_invitation_id TEXT REFERENCES channel_invitations(id) ON DELETE SET NULL,
+                    UNIQUE(channel_id, key_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_channel_members_channel_key
+                    ON channel_members(channel_id, key_id);
+
                 CREATE TABLE IF NOT EXISTS audit_cleanup_runs (
                     id TEXT PRIMARY KEY,
                     started_at TEXT NOT NULL,
@@ -228,12 +240,16 @@ class BackchannelStore:
             )
             self._ensure_column(conn, "channels", "owner_id", "TEXT")
             self._ensure_column(conn, "actors", "owner_id", "TEXT")
+            self._ensure_column(conn, "channels", "access", "TEXT NOT NULL DEFAULT 'open'")
 
     def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str) -> dict[str, Any]:
         name = self._required_string(payload, "name")
         mode = self._required_string(payload, "mode")
         if mode not in {"broadcast", "claimable"}:
             raise APIError(422, "invalid_mode", "Channel mode must be 'broadcast' or 'claimable'")
+        access = payload.get("access", "open")
+        if access not in {"open", "restricted"}:
+            raise APIError(422, "invalid_access", "Channel access must be 'open' or 'restricted'")
 
         description = self._optional_string(payload.get("description"), default="")
         metadata_schema = self._ensure_mapping(payload.get("metadata_schema", {}), "metadata_schema")
@@ -245,8 +261,8 @@ class BackchannelStore:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, description, metadata_schema, pinned_message, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, description, metadata_schema, pinned_message, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -254,6 +270,7 @@ class BackchannelStore:
                     owner_id,
                     name,
                     mode,
+                    access,
                     description,
                     json.dumps(metadata_schema, sort_keys=True),
                     pinned_message,
@@ -262,23 +279,24 @@ class BackchannelStore:
                 ),
             )
             self._replace_channel_links(conn, channel_id, related_channels)
+            self._grant_channel_access(conn, channel_id, key_id)
             conn.commit()
             channel = self._get_channel_by_id(conn, channel_id)
             return self._serialize_channel(conn, channel)
 
-    def get_channel(self, identifier: str) -> dict[str, Any]:
+    def get_channel(self, identifier: str, key_id: str) -> dict[str, Any]:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id)
             return self._serialize_channel(conn, channel)
 
-    def update_channel(self, identifier: str, payload: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"name", "mode", "description", "metadata_schema", "pinned_message", "related_channels"}
+    def update_channel(self, identifier: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+        allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise APIError(422, "invalid_fields", "Unknown channel fields", {"fields": unknown})
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id)
             updates: list[tuple[str, Any]] = []
             if "name" in payload:
                 updates.append(("name", self._required_string(payload, "name")))
@@ -287,6 +305,11 @@ class BackchannelStore:
                 if mode not in {"broadcast", "claimable"}:
                     raise APIError(422, "invalid_mode", "Channel mode must be 'broadcast' or 'claimable'")
                 updates.append(("mode", mode))
+            if "access" in payload:
+                access = payload["access"]
+                if access not in {"open", "restricted"}:
+                    raise APIError(422, "invalid_access", "Channel access must be 'open' or 'restricted'")
+                updates.append(("access", access))
             if "description" in payload:
                 updates.append(("description", self._optional_string(payload.get("description"), default="")))
             if "metadata_schema" in payload:
@@ -307,10 +330,10 @@ class BackchannelStore:
             updated = self._get_channel_by_id(conn, channel["id"])
             return self._serialize_channel(conn, updated)
 
-    def create_channel_alias(self, identifier: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def create_channel_alias(self, identifier: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
         alias = self._required_string(payload, "alias")
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id)
             self._insert_alias(conn, "channel_aliases", "channel_id", channel["id"], alias)
             conn.commit()
             return self._serialize_channel(conn, self._get_channel_by_id(conn, channel["id"]))
@@ -347,7 +370,7 @@ class BackchannelStore:
             conn.commit()
             return self._serialize_actor(conn, self._get_actor_by_id(conn, actor["id"]))
 
-    def create_message(self, channel_identifier: str, payload: dict[str, Any]) -> MessageEnvelope:
+    def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str) -> MessageEnvelope:
         content = self._required_string(payload, "content")
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
         actor_identifier = payload.get("actor")
@@ -358,7 +381,7 @@ class BackchannelStore:
         message_id = str(uuid.uuid4())
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
             actor = None
             if actor_identifier is not None:
                 actor = self._resolve_actor(conn, self._optional_string(actor_identifier))
@@ -383,13 +406,13 @@ class BackchannelStore:
             message = self._get_message(conn, message_id)
             return MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
 
-    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None) -> dict[str, Any]:
+    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
         if page_size < 1 or page_size > 100:
             raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
             now = to_timestamp(self.now())
             params: list[Any] = [channel["id"], now]
             since_clause = ""
@@ -418,7 +441,7 @@ class BackchannelStore:
                 "next_since": next_since,
             }
 
-    def ack_message(self, message_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
         actor_identifier = self._required_string(payload, "actor")
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
@@ -426,6 +449,9 @@ class BackchannelStore:
             message = self._get_message(conn, message_id)
             if parse_timestamp(message["expires_at"]) <= self.now():
                 raise APIError(410, "message_expired", "Expired messages can no longer be acknowledged")
+
+            channel = self._get_channel_by_id(conn, message["channel_id"])
+            self._check_channel_access(conn, channel, key_id)
 
             actor = self._resolve_actor(conn, actor_identifier)
             existing = conn.execute(
@@ -459,7 +485,7 @@ class BackchannelStore:
                 "message": self._serialize_message(conn, refreshed),
             }
 
-    def claim_message(self, message_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def claim_message(self, message_id: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
         actor_identifier = self._required_string(payload, "actor")
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
@@ -471,6 +497,7 @@ class BackchannelStore:
             channel = self._get_channel_by_id(conn, message["channel_id"])
             if channel["mode"] != "claimable":
                 raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
+            self._check_channel_access(conn, channel, key_id)
 
             actor = self._resolve_actor(conn, actor_identifier)
             if message["claimed_by_actor_id"]:
@@ -504,7 +531,7 @@ class BackchannelStore:
 
     def create_channel_invitation(self, channel_identifier: str, owner_id: str, key_id: str) -> dict[str, Any]:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
             created_at = self.now()
             invitation_id = secrets.token_urlsafe(18)
             expires_at = created_at + timedelta(hours=24)
@@ -526,9 +553,11 @@ class BackchannelStore:
             invitation = self._get_invitation(conn, invitation_id)
             return self._serialize_invitation(conn, invitation)
 
-    def get_channel_invitation(self, invitation_id: str) -> dict[str, Any]:
+    def get_channel_invitation(self, invitation_id: str, key_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             invitation = self._get_active_invitation(conn, invitation_id)
+            self._grant_channel_access(conn, invitation["channel_id"], key_id, invitation_id=invitation_id)
+            conn.commit()
             return self._serialize_invitation(conn, invitation)
 
     def revoke_channel_invitation(self, invitation_id: str) -> dict[str, Any]:
@@ -542,6 +571,44 @@ class BackchannelStore:
                 conn.commit()
             refreshed = self._get_invitation(conn, invitation_id)
             return self._serialize_invitation(conn, refreshed)
+
+    def list_channel_members(self, channel_identifier: str, key_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can list members")
+            rows = conn.execute(
+                "SELECT * FROM channel_members WHERE channel_id = ? ORDER BY granted_at ASC",
+                (channel["id"],),
+            ).fetchall()
+            return [self._serialize_member(row) for row in rows]
+
+    def add_channel_member(self, channel_identifier: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+        member_key_id = self._required_string(payload, "key_id")
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can add members")
+            self._grant_channel_access(conn, channel["id"], member_key_id)
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM channel_members WHERE channel_id = ? AND key_id = ?",
+                (channel["id"], member_key_id),
+            ).fetchone()
+            return self._serialize_member(row)
+
+    def remove_channel_member(self, channel_identifier: str, member_key_id: str, key_id: str) -> None:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can remove members")
+            if member_key_id == channel["owner_key_id"]:
+                raise APIError(409, "cannot_remove_owner", "Cannot remove the channel owner from members")
+            conn.execute(
+                "DELETE FROM channel_members WHERE channel_id = ? AND key_id = ?",
+                (channel["id"], member_key_id),
+            )
+            conn.commit()
 
     def cleanup_expired_messages(self) -> int:
         summary = self.archive_and_cleanup_expired_records()
@@ -758,9 +825,11 @@ class BackchannelStore:
             "purged_invitations": purged_invitations,
         }
 
-    def _resolve_channel(self, conn: sqlite3.Connection, identifier: str) -> sqlite3.Row:
+    def _resolve_channel(self, conn: sqlite3.Connection, identifier: str, key_id: str | None = None) -> sqlite3.Row:
         channel = conn.execute("SELECT * FROM channels WHERE id = ?", (identifier,)).fetchone()
         if channel is not None:
+            if key_id is not None:
+                self._check_channel_access(conn, channel, key_id)
             return channel
         channel = conn.execute(
             """
@@ -773,7 +842,30 @@ class BackchannelStore:
         ).fetchone()
         if channel is None:
             raise APIError(404, "channel_not_found", f"Unknown channel '{identifier}'")
+        if key_id is not None:
+            self._check_channel_access(conn, channel, key_id)
         return channel
+
+    def _check_channel_access(self, conn: sqlite3.Connection, channel: sqlite3.Row, key_id: str) -> None:
+        if channel["access"] == "open":
+            return
+        if key_id == channel["owner_key_id"]:
+            return
+        row = conn.execute(
+            "SELECT id FROM channel_members WHERE channel_id = ? AND key_id = ?",
+            (channel["id"], key_id),
+        ).fetchone()
+        if row is None:
+            raise APIError(403, "channel_access_denied", "You are not a member of this channel")
+
+    def _grant_channel_access(self, conn: sqlite3.Connection, channel_id: str, key_id: str, invitation_id: str | None = None) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO channel_members (id, channel_id, key_id, granted_at, granted_via_invitation_id)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(uuid.uuid4()), channel_id, key_id, to_timestamp(self.now()), invitation_id),
+        )
 
     def _resolve_actor(self, conn: sqlite3.Connection, identifier: str) -> sqlite3.Row:
         actor = conn.execute("SELECT * FROM actors WHERE id = ?", (identifier,)).fetchone()
@@ -861,6 +953,7 @@ class BackchannelStore:
             "created_by_key_id": row["owner_key_id"],
             "name": row["name"],
             "mode": row["mode"],
+            "access": row["access"],
             "description": row["description"],
             "metadata_schema": json.loads(row["metadata_schema"]),
             "pinned_message": row["pinned_message"],
@@ -931,6 +1024,15 @@ class BackchannelStore:
             "claimed_at": row["claimed_at"],
             "acknowledged_by": acks,
             "active": parse_timestamp(row["expires_at"]) > self.now(),
+        }
+
+    def _serialize_member(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "channel_id": row["channel_id"],
+            "key_id": row["key_id"],
+            "granted_at": row["granted_at"],
+            "granted_via_invitation_id": row["granted_via_invitation_id"],
         }
 
     def _serialize_invitation(self, conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
