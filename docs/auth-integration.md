@@ -42,14 +42,22 @@ Expected JSON response:
 
 ## Ownership Model
 
-- `owner_id` is the tenant boundary inside Backchannel.
-- `key_id` is recorded as the key that created a channel or actor.
-- Channels and actors are only available to requests authenticated as the same `owner_id`.
-- Invitation ids are safe discovery handles for channels, but they still resolve only for the matching `owner_id`.
-- This avoids creating a second key-management system inside Backchannel.
+- `owner_id` is an audit field recording who created a resource — it is not an access gate.
+- `key_id` is the caller's identity used for access control in restricted channels.
+- By default, any authenticated key can read and write any channel (`access: open`).
+- Restricted channels (`access: restricted`) require explicit membership. The channel
+  creator is auto-added; others gain access by resolving an invitation, or by being
+  added manually by the channel owner.
+- Cross-owner access is intentional — Backchannel is single-tenant by design.
+- Invitation resolution is always cross-key: any authenticated key can resolve any
+  active invitation regardless of who created it.
 
 ## Upstream Work Still Needed In `the-api-depot`
 
 - Add the introspection endpoint described above.
 - Authenticate Backchannel itself with a service token or another explicit server-to-server trust mechanism.
 - Ensure revoked or inactive keys immediately return `active: false` or an auth failure.
+
+---
+
+© 2026 Oakstack

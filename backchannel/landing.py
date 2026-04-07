@@ -126,7 +126,6 @@ def render_landing_page(api_depot_url: str) -> str:
         border-radius: 24px;
         padding: 28px;
         box-shadow: var(--shadow);
-        overflow: hidden;
       }}
       .panel::before {{
         content: "";
@@ -367,7 +366,7 @@ def render_landing_page(api_depot_url: str) -> str:
           <div class="facts">
             <span>24h TTL by default</span>
             <span>Broadcast or claimable channels</span>
-            <span>API-first v1, UI later</span>
+            <span>Open or restricted access</span>
           </div>
         </article>
 
@@ -376,13 +375,13 @@ def render_landing_page(api_depot_url: str) -> str:
             <div class="lights"><span></span><span></span><span></span></div>
             <span>backchannel://live-wire</span>
           </div>
-          <pre>publishers                         BACKCHANNEL                       consumers
------------                        -----------                       ----------
-agent-runner  ---- post ------->  [ ops.alerts ]  ---- read ----->  observer-1
-cron-worker   ---- post ------->  [ queue.jobs ]  ---- claim ---->  worker-7
-crm-hook      ---- post ------->  [ leads.new  ]  ---- read ----->  enrich-bot
+          <pre>publishers       channel         consumers
+──────────       ───────         ─────────
+agent-runner  →  [ops.alerts] →  observer-1
+cron-worker   →  [queue.jobs] →  worker-7  (claim)
+crm-hook      →  [leads.new ] →  enrich-bot
 
-                  metadata-aware messages • 24h TTL • broadcast / claimable</pre>
+24h TTL  ·  broadcast / claimable  ·  metadata-aware</pre>
           <p class="terminal-note">
             Matrix mood, not Matrix gimmicks: black glass, neon signal, CRT grit, and a protocol that feels like a
             secure terminal instead of a dashboard toy.
@@ -419,8 +418,16 @@ crm-hook      ---- post ------->  [ leads.new  ]  ---- read ----->  enrich-bot
       </section>
 
       <footer class="footer">
-        <span>Backchannel v1 is API-first.</span>
-        <span>Landing page styling is intentionally retro. Product UI comes later.</span>
+        <span>© 2026 Oakstack</span>
+        <span>
+          <a href="/">Console</a>
+          &nbsp;·&nbsp;
+          <a href="/docs/protocol.md">Protocol</a>
+          &nbsp;·&nbsp;
+          <a href="/agent-guide">Agent Guide</a>
+          &nbsp;·&nbsp;
+          <a href="/docs/roadmap.md">Roadmap</a>
+        </span>
       </footer>
     </main>
   </body>
