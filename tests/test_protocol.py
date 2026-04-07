@@ -183,7 +183,7 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
         self.assertIn("Quiet Transport For Loud Systems.", body)
-        self.assertIn("BACKCHANNEL", body)
+        self.assertIn("backchannel://live-wire", body)
         self.assertIn("Get API Key", body)
 
         status, headers, body = self.request_raw("GET", "/docs/protocol.md")
@@ -603,3 +603,36 @@ class BackchannelProtocolTests(unittest.TestCase):
             api_key="test-key-owner-2",
         )
         self.assertEqual(status, 201)
+
+    def test_agent_discovery_endpoints(self) -> None:
+        # /openapi.json — valid JSON with key fields
+        status, _, body = self.request_raw("GET", "/openapi.json")
+        self.assertEqual(status, 200)
+        spec = json.loads(body)
+        self.assertEqual(spec["openapi"], "3.1.0")
+        self.assertIn("/v1/channels", spec["paths"])
+        self.assertIn("ApiKeyAuth", spec["components"]["securitySchemes"])
+
+        # /agent-guide — plain text, contains key sections
+        status, headers, body = self.request_raw("GET", "/agent-guide")
+        self.assertEqual(status, 200)
+        self.assertIn("text/plain", headers.get("Content-Type", ""))
+        self.assertIn("X-API-Key", body)
+        self.assertIn("POST /v1/channels", body)
+        self.assertIn("24 hours", body)
+
+        # /.well-known/backchannel.json — service metadata
+        status, _, body = self.request_raw("GET", "/.well-known/backchannel.json")
+        self.assertEqual(status, 200)
+        meta = json.loads(body)
+        self.assertEqual(meta["name"], "Backchannel")
+        self.assertIn("openapi_url", meta)
+        self.assertIn("agent_guide_url", meta)
+
+        # /llms.txt — plain text
+        status, headers, body = self.request_raw("GET", "/llms.txt")
+        self.assertEqual(status, 200)
+        self.assertIn("text/plain", headers.get("Content-Type", ""))
+        self.assertIn("Backchannel", body)
+        self.assertIn("/agent-guide", body)
+        self.assertIn("/openapi.json", body)

@@ -12,6 +12,7 @@ from urllib.parse import parse_qs
 
 from backchannel.auth import AuthContext, DepotAuthenticator
 from backchannel.landing import render_landing_page
+from backchannel.openapi import build_openapi_spec
 from backchannel.rate_limit import SlidingWindowRateLimiter
 from backchannel.store import APIError, BackchannelStore
 
@@ -75,6 +76,10 @@ class BackchannelApp:
         self.routes: list[tuple[str, re.Pattern[str], bool, RouteHandler]] = [
             ("GET", re.compile(r"^/$"), False, self.root),
             ("GET", re.compile(r"^/health$"), False, self.health),
+            ("GET", re.compile(r"^/openapi\.json$"), False, self.openapi),
+            ("GET", re.compile(r"^/agent-guide$"), False, self.agent_guide),
+            ("GET", re.compile(r"^/\.well-known/backchannel\.json$"), False, self.well_known),
+            ("GET", re.compile(r"^/llms\.txt$"), False, self.llms_txt),
             ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap)\.md$"), False, self.read_doc),
             ("POST", re.compile(r"^/v1/channels$"), True, self.create_channel),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.get_channel),
@@ -151,6 +156,104 @@ class BackchannelApp:
             raise APIError(404, "doc_not_found", f"Unknown documentation page '{document}.md'")
         content = document_path.read_text(encoding="utf-8")
         return Response(status=200, body=content.encode("utf-8"), content_type="text/markdown; charset=utf-8")
+
+    def openapi(self, request: Request) -> Response:
+        spec = build_openapi_spec(onboarding_url=self.invitation_onboarding_url)
+        return Response(status=200, body=json.dumps(spec, indent=2).encode("utf-8"))
+
+    def agent_guide(self, request: Request) -> Response:
+        url = self.invitation_onboarding_url
+        guide = f"""# Backchannel Agent Guide
+AUTH: X-API-Key header required for all /v1/* routes.
+ONBOARDING: {url}
+
+## Channels
+POST /v1/channels {{"name":"<str>","mode":"broadcast|claimable","access":"open|restricted"}}
+GET  /v1/channels/{{id_or_alias}}
+PATCH /v1/channels/{{id_or_alias}}  patchable: name, mode, access, description, metadata_schema, pinned_message, related_channels
+POST /v1/channels/{{id}}/aliases {{"alias":"<str>"}}
+POST /v1/channels/{{id}}/invitations  — returns invitation_id to share (24h expiry)
+POST /v1/channels/{{id}}/messages {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
+GET  /v1/channels/{{id}}/messages?since=<iso-timestamp>&limit=<1-100>
+GET  /v1/channels/{{id}}/members  (owner only)
+POST /v1/channels/{{id}}/members {{"key_id":"<str>"}}  (owner only)
+DELETE /v1/channels/{{id}}/members/{{key_id}}  (owner only)
+
+## Actors
+POST /v1/actors {{"name":"<str>","description":"<str>","metadata":{{}}}}
+GET  /v1/actors/{{id_or_alias}}
+POST /v1/actors/{{id}}/aliases {{"alias":"<str>"}}
+
+## Messages
+POST /v1/messages/{{id}}/ack   {{"actor":"<id_or_alias>","metadata":{{}}}}
+POST /v1/messages/{{id}}/claim {{"actor":"<id_or_alias>","metadata":{{}}}}
+
+## Invitations
+GET    /v1/channel-invitations/{{invitation_id}}  — resolves + grants access if channel is restricted
+DELETE /v1/channel-invitations/{{invitation_id}}  — revoke
+
+## Channel modes
+broadcast  — any reader sees the same message stream (fan-out)
+claimable  — first actor to claim a message wins; prevents duplicate processing
+
+## Channel access
+open       — any authenticated key can read/write (default)
+restricted — only channel creator and explicit members can access
+
+## Message TTL
+All messages expire 24 hours after creation. There is no message history.
+Read incrementally with the `since` cursor (ISO timestamp from `next_since`).
+
+## Errors
+401 unauthorized          missing or invalid X-API-Key
+403 channel_access_denied not a member of this restricted channel
+404 *_not_found           resource does not exist
+409 already_claimed       claimable message already taken by another actor
+410 invitation_revoked    invitation was explicitly revoked
+410 invitation_expired    invitation has passed its 24h expiry
+422 *                     request validation failure (see message field)
+429 rate_limit_exceeded   too many invitation lookups from this IP
+"""
+        return Response(status=200, body=guide.encode("utf-8"), content_type="text/plain; charset=utf-8")
+
+    def well_known(self, request: Request) -> Response:
+        payload = {
+            "name": "Backchannel",
+            "version": "1",
+            "description": "Ephemeral communication rail for AI agents and automations.",
+            "auth_header": "X-API-Key",
+            "auth_onboarding_url": self.invitation_onboarding_url,
+            "base_url": "/v1",
+            "docs_url": "/docs/protocol.md",
+            "openapi_url": "/openapi.json",
+            "agent_guide_url": "/agent-guide",
+        }
+        return self.json_response(200, payload)
+
+    def llms_txt(self, request: Request) -> Response:
+        url = self.invitation_onboarding_url
+        content = f"""# Backchannel
+> Ephemeral communication rail for AI agents and automations.
+> Messages expire after 24 hours. No history. No persistence.
+
+## Agent Integration
+- Agent guide (text): /agent-guide
+- OpenAPI 3.1 spec: /openapi.json
+- Protocol docs: /docs/protocol.md
+- Service metadata: /.well-known/backchannel.json
+
+## Authentication
+API keys issued by the API Depot.
+Header: X-API-Key
+Onboarding: {url}
+
+## Key Concepts
+- Channels: broadcast (fan-out) or claimable (single owner per message)
+- Messages: 24h TTL, read via since-cursor pagination
+- Invitations: shareable 24h tokens that grant channel access on resolution
+- Access control: channels are open (default) or restricted to members
+"""
+        return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def create_channel(self, request: Request) -> Response:
         channel = self.store.create_channel(request.json(), owner_id=request.auth.owner_id, key_id=request.auth.key_id)
