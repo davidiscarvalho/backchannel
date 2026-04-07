@@ -91,6 +91,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/members$"), True, self.list_channel_members),
             ("POST", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/members$"), True, self.add_channel_member),
             ("DELETE", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/members/(?P<member_key_id>[^/]+)$"), True, self.remove_channel_member),
+            ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/events$"), True, self.list_channel_events),
             ("POST", re.compile(r"^/v1/actors$"), True, self.create_actor),
             ("GET", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)$"), True, self.get_actor),
             ("POST", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)/aliases$"), True, self.create_actor_alias),
@@ -178,6 +179,7 @@ GET  /v1/channels/{{id}}/messages?since=<iso-timestamp>&limit=<1-100>
 GET  /v1/channels/{{id}}/members  (owner only)
 POST /v1/channels/{{id}}/members {{"key_id":"<str>"}}  (owner only)
 DELETE /v1/channels/{{id}}/members/{{key_id}}  (owner only)
+GET  /v1/channels/{{id}}/events?since=<iso-timestamp>&limit=<1-100>  (owner only)
 
 ## Actors
 POST /v1/actors {{"name":"<str>","description":"<str>","metadata":{{}}}}
@@ -314,6 +316,13 @@ Onboarding: {url}
         self.store.remove_channel_member(identifier, member_key_id, key_id=request.auth.key_id)
         return self.json_response(200, {"status": "removed"})
 
+    def list_channel_events(self, request: Request, identifier: str) -> Response:
+        since = request.query_value("since")
+        limit = request.query_value("limit")
+        parsed_limit = None if limit is None else int(limit)
+        payload = self.store.list_channel_events(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id)
+        return self.json_response(200, payload)
+
     def ack_message(self, request: Request, message_id: str) -> Response:
         payload = self.store.ack_message(message_id, request.json(), key_id=request.auth.key_id)
         return self.json_response(200, payload)
@@ -339,7 +348,7 @@ Onboarding: {url}
         return self.json_response(200, invitation)
 
     def revoke_channel_invitation(self, request: Request, invitation_id: str) -> Response:
-        invitation = self.store.revoke_channel_invitation(invitation_id)
+        invitation = self.store.revoke_channel_invitation(invitation_id, key_id=request.auth.key_id)
         return self.json_response(200, invitation)
 
     def json_response(self, status: int, payload: dict[str, Any]) -> Response:

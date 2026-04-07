@@ -636,3 +636,98 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertIn("Backchannel", body)
         self.assertIn("/agent-guide", body)
         self.assertIn("/openapi.json", body)
+
+    def test_channel_events_endpoint(self) -> None:
+        # Create a restricted channel as owner-1
+        status, channel = self.request(
+            "POST", "/v1/channels",
+            {"name": "evt-channel", "mode": "broadcast", "access": "restricted"},
+            api_key="test-key-owner-1",
+        )
+        self.assertEqual(status, 201)
+        channel_id = channel["id"]
+
+        # Initially no events
+        status, page = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
+        self.assertEqual(status, 200)
+        self.assertEqual(page["items"], [])
+
+        # Add a member explicitly — expect member_added event
+        status, _ = self.request(
+            "POST", f"/v1/channels/{channel_id}/members",
+            {"key_id": "key_owner_2"},
+            api_key="test-key-owner-1",
+        )
+        self.assertEqual(status, 201)
+
+        status, page = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(page["items"]), 1)
+        evt = page["items"][0]
+        self.assertEqual(evt["event_type"], "member_added")
+        self.assertEqual(evt["actor_key_id"], "key_owner_1")
+        self.assertEqual(evt["subject_key_id"], "key_owner_2")
+        self.assertIsNone(evt["invitation_id"])
+
+        # Remove the member — expect member_removed event
+        status, _ = self.request(
+            "DELETE", f"/v1/channels/{channel_id}/members/key_owner_2",
+            api_key="test-key-owner-1",
+        )
+        self.assertEqual(status, 200)
+
+        # Create invitation then resolve it — expect invitation_resolved event
+        status, inv = self.request(
+            "POST", f"/v1/channels/{channel_id}/invitations",
+            {},
+            api_key="test-key-owner-1",
+        )
+        self.assertEqual(status, 201)
+        inv_id = inv["id"]
+
+        status, _ = self.request("GET", f"/v1/channel-invitations/{inv_id}", api_key="test-key-owner-2")
+        self.assertEqual(status, 200)
+
+        # Revoke a second invitation — expect invitation_revoked event
+        status, inv2 = self.request(
+            "POST", f"/v1/channels/{channel_id}/invitations",
+            {},
+            api_key="test-key-owner-1",
+        )
+        inv2_id = inv2["id"]
+        status, _ = self.request(
+            "DELETE", f"/v1/channel-invitations/{inv2_id}",
+            api_key="test-key-owner-1",
+        )
+        self.assertEqual(status, 200)
+
+        # All four event types should now be present
+        status, page = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
+        self.assertEqual(status, 200)
+        event_types = [e["event_type"] for e in page["items"]]
+        self.assertIn("member_added", event_types)
+        self.assertIn("member_removed", event_types)
+        self.assertIn("invitation_resolved", event_types)
+        self.assertIn("invitation_revoked", event_types)
+
+        # invitation_resolved event should carry the invitation_id
+        resolved = next(e for e in page["items"] if e["event_type"] == "invitation_resolved")
+        self.assertEqual(resolved["invitation_id"], inv_id)
+        self.assertEqual(resolved["subject_key_id"], "key_owner_2")
+
+        # Non-owner gets 403
+        status, _ = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-2")
+        self.assertEqual(status, 403)
+
+        # Events survive cleanup until they expire
+        event_count = len(page["items"])
+        self.clock.advance(hours=1)
+        self.app.store.archive_and_cleanup_expired_records()
+        status, page2 = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
+        self.assertEqual(len(page2["items"]), event_count)  # not expired yet
+
+        # Advance past TTL — events purged
+        self.clock.advance(hours=25)
+        self.app.store.archive_and_cleanup_expired_records()
+        status, page3 = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
+        self.assertEqual(page3["items"], [])

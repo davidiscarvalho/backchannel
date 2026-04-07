@@ -189,6 +189,20 @@ def build_openapi_spec(onboarding_url: str = "") -> dict:
                 },
                 "Invitation": invitation_schema,
                 "Member": member_schema,
+                "ChannelEvent": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "channel_id": {"type": "string"},
+                        "event_type": {"type": "string", "enum": ["member_added", "member_removed", "invitation_resolved", "invitation_revoked"]},
+                        "actor_key_id": {"type": "string", "description": "Key that triggered the event"},
+                        "subject_key_id": {"type": ["string", "null"], "description": "Key the event is about (member added/removed/resolved)"},
+                        "invitation_id": {"type": ["string", "null"]},
+                        "metadata": {"type": "object"},
+                        "created_at": {"type": "string", "format": "date-time"},
+                        "expires_at": {"type": "string", "format": "date-time"},
+                    },
+                },
                 "Error": error_schema,
             },
         },
@@ -333,6 +347,34 @@ def build_openapi_spec(onboarding_url: str = "") -> dict:
                     **json_body({"type": "object", "required": ["key_id"], "properties": {"key_id": {"type": "string"}}}),
                     "responses": {**ok({"$ref": "#/components/schemas/Member"}, 201), **errors(401, 403, 404, 422)},
                 },
+            },
+            "/v1/channels/{identifier}/events": {
+                "get": {
+                    "summary": "List channel lifecycle events (owner only)",
+                    "operationId": "listChannelEvents",
+                    "description": "Returns member and invitation lifecycle events in chronological order. Owner-only. 24h TTL.",
+                    "security": auth_required,
+                    "tags": ["Events"],
+                    "parameters": [
+                        {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "since", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Return events created after this timestamp (cursor)"},
+                        {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "OK",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "items": {"type": "array", "items": {"$ref": "#/components/schemas/ChannelEvent"}},
+                                    "limit": {"type": "integer"},
+                                    "next_since": {"type": ["string", "null"], "format": "date-time"},
+                                },
+                            }}},
+                        },
+                        **errors(401, 403, 404, 422),
+                    },
+                }
             },
             "/v1/channels/{identifier}/members/{member_key_id}": {
                 "delete": {

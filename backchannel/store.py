@@ -170,6 +170,38 @@ class BackchannelStore:
                 CREATE INDEX IF NOT EXISTS idx_channel_members_channel_key
                     ON channel_members(channel_id, key_id);
 
+                CREATE TABLE IF NOT EXISTS channel_events (
+                    id TEXT PRIMARY KEY,
+                    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                    event_type TEXT NOT NULL CHECK (event_type IN ('member_added', 'member_removed', 'invitation_resolved', 'invitation_revoked')),
+                    actor_key_id TEXT NOT NULL,
+                    subject_key_id TEXT,
+                    invitation_id TEXT,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_channel_events_channel_created
+                    ON channel_events(channel_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_channel_events_expiry
+                    ON channel_events(expires_at);
+
+                CREATE TABLE IF NOT EXISTS audit_channel_events (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES audit_cleanup_runs(id) ON DELETE CASCADE,
+                    live_event_id TEXT NOT NULL,
+                    live_channel_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    actor_key_id TEXT NOT NULL,
+                    subject_key_id TEXT,
+                    invitation_id TEXT,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    archived_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS audit_cleanup_runs (
                     id TEXT PRIMARY KEY,
                     started_at TEXT NOT NULL,
@@ -241,6 +273,8 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "owner_id", "TEXT")
             self._ensure_column(conn, "actors", "owner_id", "TEXT")
             self._ensure_column(conn, "channels", "access", "TEXT NOT NULL DEFAULT 'open'")
+            self._ensure_column(conn, "audit_cleanup_runs", "archived_channel_events", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "audit_cleanup_runs", "purged_channel_events", "INTEGER NOT NULL DEFAULT 0")
 
     def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str) -> dict[str, Any]:
         name = self._required_string(payload, "name")
@@ -557,10 +591,11 @@ class BackchannelStore:
         with self.connect() as conn:
             invitation = self._get_active_invitation(conn, invitation_id)
             self._grant_channel_access(conn, invitation["channel_id"], key_id, invitation_id=invitation_id)
+            self._record_event(conn, invitation["channel_id"], "invitation_resolved", key_id, subject_key_id=key_id, invitation_id=invitation_id)
             conn.commit()
             return self._serialize_invitation(conn, invitation)
 
-    def revoke_channel_invitation(self, invitation_id: str) -> dict[str, Any]:
+    def revoke_channel_invitation(self, invitation_id: str, key_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             invitation = self._get_invitation(conn, invitation_id)
             if invitation["revoked_at"] is None:
@@ -568,6 +603,7 @@ class BackchannelStore:
                     "UPDATE channel_invitations SET revoked_at = ? WHERE id = ?",
                     (to_timestamp(self.now()), invitation_id),
                 )
+                self._record_event(conn, invitation["channel_id"], "invitation_revoked", key_id, invitation_id=invitation_id)
                 conn.commit()
             refreshed = self._get_invitation(conn, invitation_id)
             return self._serialize_invitation(conn, refreshed)
@@ -590,6 +626,7 @@ class BackchannelStore:
             if key_id != channel["owner_key_id"]:
                 raise APIError(403, "forbidden", "Only the channel owner can add members")
             self._grant_channel_access(conn, channel["id"], member_key_id)
+            self._record_event(conn, channel["id"], "member_added", key_id, subject_key_id=member_key_id)
             conn.commit()
             row = conn.execute(
                 "SELECT * FROM channel_members WHERE channel_id = ? AND key_id = ?",
@@ -608,7 +645,39 @@ class BackchannelStore:
                 "DELETE FROM channel_members WHERE channel_id = ? AND key_id = ?",
                 (channel["id"], member_key_id),
             )
+            self._record_event(conn, channel["id"], "member_removed", key_id, subject_key_id=member_key_id)
             conn.commit()
+
+    def list_channel_events(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str) -> dict[str, Any]:
+        page_size = 50 if limit is None else limit
+        if page_size < 1 or page_size > 100:
+            raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
+
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can read events")
+            now = to_timestamp(self.now())
+            params: list[Any] = [channel["id"], now]
+            since_clause = ""
+            if since:
+                since_clause = "AND created_at > ?"
+                params.append(to_timestamp(parse_timestamp(since)))
+            params.append(page_size)
+            rows = conn.execute(
+                f"""
+                SELECT * FROM channel_events
+                WHERE channel_id = ?
+                  AND expires_at > ?
+                  {since_clause}
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            items = [self._serialize_event(row) for row in rows]
+            next_since = items[-1]["created_at"] if items else since
+            return {"items": items, "limit": page_size, "next_since": next_since}
 
     def cleanup_expired_messages(self) -> int:
         summary = self.archive_and_cleanup_expired_records()
@@ -633,7 +702,11 @@ class BackchannelStore:
                 conn.execute(
                     """
                     UPDATE audit_cleanup_runs
-                    SET finished_at = ?, status = 'completed', archived_messages = ?, purged_messages = ?, archived_invitations = ?, purged_invitations = ?, failure_message = NULL
+                    SET finished_at = ?, status = 'completed',
+                        archived_messages = ?, purged_messages = ?,
+                        archived_invitations = ?, purged_invitations = ?,
+                        archived_channel_events = ?, purged_channel_events = ?,
+                        failure_message = NULL
                     WHERE id = ?
                     """,
                     (
@@ -642,6 +715,8 @@ class BackchannelStore:
                         summary["purged_messages"],
                         summary["archived_invitations"],
                         summary["purged_invitations"],
+                        summary["archived_channel_events"],
+                        summary["purged_channel_events"],
                         run_id,
                     ),
                 )
@@ -812,10 +887,45 @@ class BackchannelStore:
             )
             archived_invitations += 1
 
+        expired_channel_events = conn.execute(
+            "SELECT * FROM channel_events WHERE expires_at <= ? ORDER BY expires_at ASC",
+            (now,),
+        ).fetchall()
+        archived_channel_events = 0
+        for row in expired_channel_events:
+            conn.execute(
+                """
+                INSERT INTO audit_channel_events (
+                    id, run_id, live_event_id, live_channel_id, event_type,
+                    actor_key_id, subject_key_id, invitation_id, metadata,
+                    created_at, expires_at, archived_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    run_id,
+                    row["id"],
+                    row["channel_id"],
+                    row["event_type"],
+                    row["actor_key_id"],
+                    row["subject_key_id"],
+                    row["invitation_id"],
+                    row["metadata"],
+                    row["created_at"],
+                    row["expires_at"],
+                    archived_at,
+                ),
+            )
+            archived_channel_events += 1
+
         purged_messages = conn.execute("DELETE FROM messages WHERE expires_at <= ?", (now,)).rowcount
         purged_invitations = conn.execute(
             "DELETE FROM channel_invitations WHERE expires_at <= ? OR revoked_at IS NOT NULL",
             (now,),
+        ).rowcount
+        purged_channel_events = conn.execute(
+            "DELETE FROM channel_events WHERE expires_at <= ?", (now,)
         ).rowcount
 
         return {
@@ -823,6 +933,48 @@ class BackchannelStore:
             "purged_messages": purged_messages,
             "archived_invitations": archived_invitations,
             "purged_invitations": purged_invitations,
+            "archived_channel_events": archived_channel_events,
+            "purged_channel_events": purged_channel_events,
+        }
+
+    def _record_event(
+        self,
+        conn: sqlite3.Connection,
+        channel_id: str,
+        event_type: str,
+        actor_key_id: str,
+        subject_key_id: str | None = None,
+        invitation_id: str | None = None,
+    ) -> None:
+        now = self.now()
+        conn.execute(
+            """
+            INSERT INTO channel_events (id, channel_id, event_type, actor_key_id, subject_key_id, invitation_id, metadata, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                channel_id,
+                event_type,
+                actor_key_id,
+                subject_key_id,
+                invitation_id,
+                to_timestamp(now),
+                to_timestamp(now + timedelta(hours=24)),
+            ),
+        )
+
+    def _serialize_event(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "channel_id": row["channel_id"],
+            "event_type": row["event_type"],
+            "actor_key_id": row["actor_key_id"],
+            "subject_key_id": row["subject_key_id"],
+            "invitation_id": row["invitation_id"],
+            "metadata": json.loads(row["metadata"]),
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
         }
 
     def _resolve_channel(self, conn: sqlite3.Connection, identifier: str, key_id: str | None = None) -> sqlite3.Row:
