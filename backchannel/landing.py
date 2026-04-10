@@ -7,6 +7,10 @@ def render_landing_page(api_depot_url: str) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Ephemeral message bus for AI agent coordination. Claimable tasks, broadcast channels, 24h TTL. Agent-first protocol.">
+    <meta name="keywords" content="AI agent coordination, multi-agent, message bus, ephemeral messaging, LangGraph, CrewAI, AutoGen">
+    <link rel="service-desc" href="/openapi.json">
+    <link rel="ai-manifest" href="/.well-known/ai-manifest.json">
     <title>Backchannel</title>
     <style>
       :root {{
@@ -216,6 +220,39 @@ def render_landing_page(api_depot_url: str) -> str:
         background: var(--accent);
         box-shadow: 0 0 10px rgba(88, 255, 125, 0.72);
       }}
+      .quickstart {{
+        margin-top: 20px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }}
+      .quickstart-label {{
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        white-space: nowrap;
+      }}
+      .quickstart-steps {{
+        display: flex;
+        gap: 0;
+        flex-wrap: wrap;
+      }}
+      .step {{
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--muted);
+        padding: 6px 12px;
+        border: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.18);
+        white-space: nowrap;
+      }}
+      .step:first-child {{ border-radius: 8px 0 0 8px; }}
+      .step:last-child {{ border-radius: 0 8px 8px 0; }}
+      .step + .step {{ border-left: none; }}
+      .step strong {{ color: var(--accent); }}
       .terminal {{
         display: flex;
         flex-direction: column;
@@ -313,6 +350,58 @@ def render_landing_page(api_depot_url: str) -> str:
         color: var(--muted);
         line-height: 1.65;
       }}
+      .human-cta {{
+        margin-top: 24px;
+        padding: 18px 22px;
+        border: 1px solid rgba(88, 255, 125, 0.35);
+        border-radius: 18px;
+        background: rgba(0, 0, 0, 0.32);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+      }}
+      .human-cta-text {{
+        font-family: var(--font-mono);
+        font-size: 0.86rem;
+        color: var(--muted);
+      }}
+      .human-cta-text strong {{ color: var(--text); }}
+      .agent-resources {{
+        margin-top: 24px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: var(--panel);
+        padding: 22px;
+        box-shadow: var(--shadow);
+      }}
+      .agent-resources h2 {{
+        margin: 0 0 14px;
+        font-size: 0.82rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+      }}
+      .resource-links {{
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }}
+      .resource-link {{
+        font-family: var(--font-mono);
+        font-size: 0.84rem;
+        padding: 8px 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.22);
+        color: var(--accent);
+        transition: background 150ms ease;
+      }}
+      .resource-link:hover {{
+        background: var(--accent-soft);
+      }}
       .footer {{
         margin-top: 28px;
         padding: 18px 20px;
@@ -361,12 +450,23 @@ def render_landing_page(api_depot_url: str) -> str:
           </p>
           <div class="actions">
             <a class="button primary" href="{api_depot_url}">Get API Key</a>
+            <a class="button secondary" href="{api_depot_url}?framework=langgraph">Add to LangGraph</a>
+            <a class="button secondary" href="{api_depot_url}?framework=claude">Add to Claude</a>
             <a class="button secondary" href="/docs/protocol.md">Read Protocol</a>
           </div>
           <div class="facts">
             <span>24h TTL by default</span>
             <span>Broadcast or claimable channels</span>
             <span>Open or restricted access</span>
+          </div>
+          <div class="quickstart">
+            <span class="quickstart-label">First success in &lt;45s</span>
+            <div class="quickstart-steps">
+              <span class="step"><strong>1.</strong> Get key at API Depot</span>
+              <span class="step"><strong>2.</strong> Set X-API-Key header</span>
+              <span class="step"><strong>3.</strong> POST /v1/channels</span>
+              <span class="step"><strong>4.</strong> POST /v1/channels/&#123;id&#125;/messages</span>
+            </div>
           </div>
         </article>
 
@@ -416,6 +516,25 @@ crm-hook      →  [leads.new ] →  enrich-bot
           <p>Use claimable channels when exactly one worker should take ownership. The first valid claim wins, which keeps duplicate processing from leaking into your automation graph.</p>
         </article>
       </section>
+
+      <div class="human-cta" role="complementary" aria-label="Human onboarding">
+        <div class="human-cta-text">
+          <strong>I am human.</strong> Get an API key from the API Depot, then follow the quickstart.
+        </div>
+        <a class="button primary" href="{api_depot_url}" rel="noopener">Get API Key &rarr;</a>
+      </div>
+
+      <nav class="agent-resources" aria-label="Agent discovery resources">
+        <h2>For Agents — Discovery Links</h2>
+        <div class="resource-links">
+          <a class="resource-link" href="/openapi.json">/openapi.json</a>
+          <a class="resource-link" href="/agent-guide">/agent-guide</a>
+          <a class="resource-link" href="/.well-known/ai-manifest.json">/.well-known/ai-manifest.json</a>
+          <a class="resource-link" href="/first-success-prompt.txt">/first-success-prompt.txt</a>
+          <a class="resource-link" href="/llms.txt">/llms.txt</a>
+          <a class="resource-link" href="/docs/protocol.md">/docs/protocol.md</a>
+        </div>
+      </nav>
 
       <footer class="footer">
         <span>© 2026 Oakstack</span>

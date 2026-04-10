@@ -17,6 +17,9 @@ class AuthContext:
     owner_id: str
     plan: str
     active: bool = True
+    tier: int = 1
+    team_id: str | None = None
+    team_name: str | None = None
 
 
 class DepotAuthenticator:
@@ -62,7 +65,14 @@ def http_introspector(url: str | None, service_token: str | None = None, timeout
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             if exc.code in {401, 403, 404}:
-                raise APIError(401, "unauthorized", "Invalid API key") from exc
+                details: dict[str, Any] = {}
+                try:
+                    body = json.loads(exc.read().decode("utf-8"))
+                    if isinstance(body, dict) and "upgrade_url" in body:
+                        details["upgrade_url"] = body["upgrade_url"]
+                except Exception:
+                    pass
+                raise APIError(401, "unauthorized", "Invalid API key", details) from exc
             raise APIError(502, "depot_error", "API Depot introspection failed") from exc
         except URLError as exc:
             raise APIError(502, "depot_unreachable", "API Depot introspection is unavailable") from exc
@@ -80,6 +90,9 @@ def auth_context_from_payload(raw_key: str, payload: dict[str, Any]) -> AuthCont
     owner_id = payload.get("owner_id")
     plan = payload.get("plan", "unknown")
     active = payload.get("active", False)
+    tier = payload.get("tier", 1)
+    team_id = payload.get("team_id")
+    team_name = payload.get("team_name")
 
     if not isinstance(key_id, str) or not key_id:
         raise APIError(502, "depot_error", "API Depot introspection did not include key_id")
@@ -89,6 +102,12 @@ def auth_context_from_payload(raw_key: str, payload: dict[str, Any]) -> AuthCont
         raise APIError(502, "depot_error", "API Depot introspection returned an invalid plan")
     if not isinstance(active, bool):
         raise APIError(502, "depot_error", "API Depot introspection returned an invalid active flag")
+    if not isinstance(tier, int):
+        tier = 1
+    if team_id is not None and not isinstance(team_id, str):
+        team_id = None
+    if team_name is not None and not isinstance(team_name, str):
+        team_name = None
 
     return AuthContext(
         raw_key=raw_key,
@@ -96,4 +115,7 @@ def auth_context_from_payload(raw_key: str, payload: dict[str, Any]) -> AuthCont
         owner_id=owner_id,
         plan=plan,
         active=active,
+        tier=tier,
+        team_id=team_id,
+        team_name=team_name,
     )

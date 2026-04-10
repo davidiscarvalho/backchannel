@@ -273,10 +273,26 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "owner_id", "TEXT")
             self._ensure_column(conn, "actors", "owner_id", "TEXT")
             self._ensure_column(conn, "channels", "access", "TEXT NOT NULL DEFAULT 'open'")
+            self._ensure_column(conn, "channels", "team_id", "TEXT")
             self._ensure_column(conn, "audit_cleanup_runs", "archived_channel_events", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "audit_cleanup_runs", "purged_channel_events", "INTEGER NOT NULL DEFAULT 0")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS idempotency_cache (
+                    id TEXT PRIMARY KEY,
+                    response_status INTEGER NOT NULL,
+                    response_body TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_idempotency_cache_expiry ON idempotency_cache(expires_at)"
+            )
+            conn.commit()
 
-    def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str) -> dict[str, Any]:
+    def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         name = self._required_string(payload, "name")
         mode = self._required_string(payload, "mode")
         if mode not in {"broadcast", "claimable"}:
@@ -289,14 +305,17 @@ class BackchannelStore:
         metadata_schema = self._ensure_mapping(payload.get("metadata_schema", {}), "metadata_schema")
         pinned_message = self._optional_string(payload.get("pinned_message"), allow_none=True)
         related_channels = payload.get("related_channels", [])
+        # team_id from payload overrides the one passed by the caller (auth context)
+        payload_team_id = self._optional_string(payload.get("team_id"), allow_none=True)
+        effective_team_id = payload_team_id if payload_team_id is not None else team_id
         channel_id = str(uuid.uuid4())
         now = to_timestamp(self.now())
 
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, description, metadata_schema, pinned_message, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -305,6 +324,7 @@ class BackchannelStore:
                     name,
                     mode,
                     access,
+                    effective_team_id,
                     description,
                     json.dumps(metadata_schema, sort_keys=True),
                     pinned_message,
@@ -318,19 +338,19 @@ class BackchannelStore:
             channel = self._get_channel_by_id(conn, channel_id)
             return self._serialize_channel(conn, channel)
 
-    def get_channel(self, identifier: str, key_id: str) -> dict[str, Any]:
+    def get_channel(self, identifier: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id)
             return self._serialize_channel(conn, channel)
 
-    def update_channel(self, identifier: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+    def update_channel(self, identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
         allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise APIError(422, "invalid_fields", "Unknown channel fields", {"fields": unknown})
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id)
             updates: list[tuple[str, Any]] = []
             if "name" in payload:
                 updates.append(("name", self._required_string(payload, "name")))
@@ -364,10 +384,10 @@ class BackchannelStore:
             updated = self._get_channel_by_id(conn, channel["id"])
             return self._serialize_channel(conn, updated)
 
-    def create_channel_alias(self, identifier: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+    def create_channel_alias(self, identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
         alias = self._required_string(payload, "alias")
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id)
             self._insert_alias(conn, "channel_aliases", "channel_id", channel["id"], alias)
             conn.commit()
             return self._serialize_channel(conn, self._get_channel_by_id(conn, channel["id"]))
@@ -404,7 +424,7 @@ class BackchannelStore:
             conn.commit()
             return self._serialize_actor(conn, self._get_actor_by_id(conn, actor["id"]))
 
-    def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str) -> MessageEnvelope:
+    def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> MessageEnvelope:
         content = self._required_string(payload, "content")
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
         actor_identifier = payload.get("actor")
@@ -415,7 +435,7 @@ class BackchannelStore:
         message_id = str(uuid.uuid4())
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             actor = None
             if actor_identifier is not None:
                 actor = self._resolve_actor(conn, self._optional_string(actor_identifier))
@@ -440,13 +460,13 @@ class BackchannelStore:
             message = self._get_message(conn, message_id)
             return MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
 
-    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str) -> dict[str, Any]:
+    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
         if page_size < 1 or page_size > 100:
             raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             now = to_timestamp(self.now())
             params: list[Any] = [channel["id"], now]
             since_clause = ""
@@ -475,7 +495,7 @@ class BackchannelStore:
                 "next_since": next_since,
             }
 
-    def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+    def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
         actor_identifier = self._required_string(payload, "actor")
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
@@ -485,7 +505,7 @@ class BackchannelStore:
                 raise APIError(410, "message_expired", "Expired messages can no longer be acknowledged")
 
             channel = self._get_channel_by_id(conn, message["channel_id"])
-            self._check_channel_access(conn, channel, key_id)
+            self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
             actor = self._resolve_actor(conn, actor_identifier)
             existing = conn.execute(
@@ -519,7 +539,7 @@ class BackchannelStore:
                 "message": self._serialize_message(conn, refreshed),
             }
 
-    def claim_message(self, message_id: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+    def claim_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
         actor_identifier = self._required_string(payload, "actor")
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
@@ -531,7 +551,7 @@ class BackchannelStore:
             channel = self._get_channel_by_id(conn, message["channel_id"])
             if channel["mode"] != "claimable":
                 raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
-            self._check_channel_access(conn, channel, key_id)
+            self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
             actor = self._resolve_actor(conn, actor_identifier)
             if message["claimed_by_actor_id"]:
@@ -563,9 +583,9 @@ class BackchannelStore:
             refreshed = self._get_message(conn, message_id)
             return {"status": "claimed", "message": self._serialize_message(conn, refreshed)}
 
-    def create_channel_invitation(self, channel_identifier: str, owner_id: str, key_id: str) -> dict[str, Any]:
+    def create_channel_invitation(self, channel_identifier: str, owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             created_at = self.now()
             invitation_id = secrets.token_urlsafe(18)
             expires_at = created_at + timedelta(hours=24)
@@ -608,9 +628,9 @@ class BackchannelStore:
             refreshed = self._get_invitation(conn, invitation_id)
             return self._serialize_invitation(conn, refreshed)
 
-    def list_channel_members(self, channel_identifier: str, key_id: str) -> list[dict[str, Any]]:
+    def list_channel_members(self, channel_identifier: str, key_id: str, team_id: str | None = None) -> list[dict[str, Any]]:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             if key_id != channel["owner_key_id"]:
                 raise APIError(403, "forbidden", "Only the channel owner can list members")
             rows = conn.execute(
@@ -619,10 +639,10 @@ class BackchannelStore:
             ).fetchall()
             return [self._serialize_member(row) for row in rows]
 
-    def add_channel_member(self, channel_identifier: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+    def add_channel_member(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
         member_key_id = self._required_string(payload, "key_id")
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             if key_id != channel["owner_key_id"]:
                 raise APIError(403, "forbidden", "Only the channel owner can add members")
             self._grant_channel_access(conn, channel["id"], member_key_id)
@@ -634,9 +654,9 @@ class BackchannelStore:
             ).fetchone()
             return self._serialize_member(row)
 
-    def remove_channel_member(self, channel_identifier: str, member_key_id: str, key_id: str) -> None:
+    def remove_channel_member(self, channel_identifier: str, member_key_id: str, key_id: str, team_id: str | None = None) -> None:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             if key_id != channel["owner_key_id"]:
                 raise APIError(403, "forbidden", "Only the channel owner can remove members")
             if member_key_id == channel["owner_key_id"]:
@@ -648,13 +668,13 @@ class BackchannelStore:
             self._record_event(conn, channel["id"], "member_removed", key_id, subject_key_id=member_key_id)
             conn.commit()
 
-    def list_channel_events(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str) -> dict[str, Any]:
+    def list_channel_events(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
         if page_size < 1 or page_size > 100:
             raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             if key_id != channel["owner_key_id"]:
                 raise APIError(403, "forbidden", "Only the channel owner can read events")
             now = to_timestamp(self.now())
@@ -748,6 +768,38 @@ class BackchannelStore:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_idempotent_response(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            now = to_timestamp(self.now())
+            row = conn.execute(
+                "SELECT response_status, response_body FROM idempotency_cache WHERE id = ? AND expires_at > ?",
+                (cache_key, now),
+            ).fetchone()
+            if row is None:
+                return None
+            return {"status": row["response_status"], "body": row["response_body"]}
+
+    def cache_idempotent_response(self, cache_key: str, status: int, body: str) -> None:
+        now = self.now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO idempotency_cache (id, response_status, response_body, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (cache_key, status, body, to_timestamp(now), to_timestamp(now + timedelta(hours=24))),
+            )
+            conn.commit()
+
+    def cleanup_idempotency_cache(self) -> int:
+        with self.connect() as conn:
+            count = conn.execute(
+                "DELETE FROM idempotency_cache WHERE expires_at <= ?",
+                (to_timestamp(self.now()),),
+            ).rowcount
+            conn.commit()
+            return count
 
     def list_audit_messages(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -977,11 +1029,11 @@ class BackchannelStore:
             "expires_at": row["expires_at"],
         }
 
-    def _resolve_channel(self, conn: sqlite3.Connection, identifier: str, key_id: str | None = None) -> sqlite3.Row:
+    def _resolve_channel(self, conn: sqlite3.Connection, identifier: str, key_id: str | None = None, team_id: str | None = None) -> sqlite3.Row:
         channel = conn.execute("SELECT * FROM channels WHERE id = ?", (identifier,)).fetchone()
         if channel is not None:
             if key_id is not None:
-                self._check_channel_access(conn, channel, key_id)
+                self._check_channel_access(conn, channel, key_id, team_id=team_id)
             return channel
         channel = conn.execute(
             """
@@ -995,13 +1047,17 @@ class BackchannelStore:
         if channel is None:
             raise APIError(404, "channel_not_found", f"Unknown channel '{identifier}'")
         if key_id is not None:
-            self._check_channel_access(conn, channel, key_id)
+            self._check_channel_access(conn, channel, key_id, team_id=team_id)
         return channel
 
-    def _check_channel_access(self, conn: sqlite3.Connection, channel: sqlite3.Row, key_id: str) -> None:
+    def _check_channel_access(self, conn: sqlite3.Connection, channel: sqlite3.Row, key_id: str, team_id: str | None = None) -> None:
         if channel["access"] == "open":
             return
         if key_id == channel["owner_key_id"]:
+            return
+        # Team-scoped access: if the channel belongs to a team and the requester is on that team, allow
+        channel_team_id = channel["team_id"] if "team_id" in channel.keys() else None
+        if channel_team_id and team_id and channel_team_id == team_id:
             return
         row = conn.execute(
             "SELECT id FROM channel_members WHERE channel_id = ? AND key_id = ?",
@@ -1099,6 +1155,7 @@ class BackchannelStore:
                 (row["id"],),
             ).fetchall()
         ]
+        team_id = row["team_id"] if "team_id" in row.keys() else None
         return {
             "id": row["id"],
             "owner_id": row["owner_id"],
@@ -1106,6 +1163,7 @@ class BackchannelStore:
             "name": row["name"],
             "mode": row["mode"],
             "access": row["access"],
+            "team_id": team_id,
             "description": row["description"],
             "metadata_schema": json.loads(row["metadata_schema"]),
             "pinned_message": row["pinned_message"],
