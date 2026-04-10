@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    container_name: backchannel_app
     ports:
       - "8080:8080"
     volumes:
@@ -15,6 +16,9 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - default
+      - shared_network
 
   worker:
     build: .
@@ -25,14 +29,25 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    networks:
+      - default
 
   frontend:
     build:
       context: ./ui
+    container_name: backchannel_frontend
     ports:
       - "3000:80"
     depends_on:
       - app
+    networks:
+      - default
+      - shared_network
 
 volumes:
   backchannel_data:
+
+networks:
+  default:
+  shared_network:
+    external: true
