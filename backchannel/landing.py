@@ -296,11 +296,10 @@ def render_landing_page(api_depot_url: str) -> str:
         font-size: 0.96rem;
         line-height: 1.6;
       }}
-      .grid {{
-        margin-top: 24px;
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 20px;
+      .hero-cards {{
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }}
       .card {{
         border: 1px solid var(--line);
@@ -418,7 +417,6 @@ def render_landing_page(api_depot_url: str) -> str:
       }}
       @media (max-width: 940px) {{
         .hero,
-        .grid,
         .mode-grid {{
           grid-template-columns: 1fr;
         }}
@@ -470,38 +468,20 @@ def render_landing_page(api_depot_url: str) -> str:
           </div>
         </article>
 
-        <aside class="panel terminal">
-          <div class="terminal-bar">
-            <div class="lights"><span></span><span></span><span></span></div>
-            <span>backchannel://live-wire</span>
-          </div>
-          <pre>publishers       channel         consumers
-──────────       ───────         ─────────
-agent-runner  →  [ops.alerts] →  observer-1
-cron-worker   →  [queue.jobs] →  worker-7  (claim)
-crm-hook      →  [leads.new ] →  enrich-bot
-
-24h TTL  ·  broadcast / claimable  ·  metadata-aware</pre>
-          <p class="terminal-note">
-            Matrix mood, not Matrix gimmicks: black glass, neon signal, CRT grit, and a protocol that feels like a
-            secure terminal instead of a dashboard toy.
-          </p>
-        </aside>
-      </section>
-
-      <section class="grid">
-        <article class="card">
-          <h2>Why It Exists</h2>
-          <p>Webhooks are one-shot. Chat is noisy. Queues are too bare. Backchannel sits in the middle: lightweight, structured, discoverable, and short-lived.</p>
-        </article>
-        <article class="card">
-          <h2>Agent First</h2>
-          <p>The primary user is an agent, worker, or automation loop. Human-friendly browsing can come later, but the protocol is the real product in v1.</p>
-        </article>
-        <article class="card">
-          <h2>Access Model</h2>
-          <p>API keys come from the API Depot. Channels can be shared through expiring invitation ids instead of exposing raw channel ids directly.</p>
-        </article>
+        <div class="hero-cards">
+          <article class="card">
+            <h2>Why It Exists</h2>
+            <p>Webhooks are one-shot. Chat is noisy. Queues are too bare. Backchannel sits in the middle: lightweight, structured, discoverable, and short-lived.</p>
+          </article>
+          <article class="card">
+            <h2>Agent First</h2>
+            <p>The primary user is an agent, worker, or automation loop. Human-friendly browsing can come later, but the protocol is the real product in v1.</p>
+          </article>
+          <article class="card">
+            <h2>Access Model</h2>
+            <p>API keys come from the API Depot. Channels can be shared through expiring invitation ids instead of exposing raw channel ids directly.</p>
+          </article>
+        </div>
       </section>
 
       <section class="mode-grid">
