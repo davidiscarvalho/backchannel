@@ -1,0 +1,235 @@
+import type {
+  Channel,
+  Message,
+  MessageEnvelope,
+  MessageList,
+  ClaimResult,
+  AckResult,
+  Session,
+  KeyResult,
+  ClientOptions,
+  BackchannelErrorBody,
+} from "./types.js";
+
+export class BackchannelError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly error: string,
+    message: string,
+    public readonly details?: Record<string, unknown>
+  ) {
+    super(`[${status}] ${error}: ${message}`);
+    this.name = "BackchannelError";
+  }
+}
+
+async function raiseForStatus(res: Response): Promise<void> {
+  if (res.ok) return;
+  let body: Partial<BackchannelErrorBody> = {};
+  try {
+    body = (await res.json()) as Partial<BackchannelErrorBody>;
+  } catch {
+    // ignore parse errors
+  }
+  throw new BackchannelError(
+    res.status,
+    body.error ?? "http_error",
+    body.message ?? res.statusText,
+    body.details
+  );
+}
+
+export class BackchannelClient {
+  private readonly baseUrl: string;
+  private readonly headers: Record<string, string>;
+
+  constructor(options: ClientOptions) {
+    this.baseUrl = (options.baseUrl ?? "https://backchannel.oakstack.eu").replace(/\/$/, "");
+    this.headers = {
+      "X-API-Key": options.apiKey,
+      "Content-Type": "application/json",
+    };
+  }
+
+  /** Get an instant Tier 0 API key — no prior auth required. */
+  static async issueKey(
+    agentLabel: string,
+    baseUrl = "https://backchannel.oakstack.eu"
+  ): Promise<KeyResult> {
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_label: agentLabel }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<KeyResult>;
+  }
+
+  // --- Channels ---
+
+  async createChannel(
+    name: string,
+    options: {
+      mode?: "broadcast" | "claimable";
+      access?: "open" | "restricted";
+      description?: string;
+      webhookUrl?: string;
+      webhookSecret?: string;
+      idempotencyKey?: string;
+    } = {}
+  ): Promise<Channel> {
+    const { mode = "claimable", access = "open", description = "", webhookUrl, webhookSecret, idempotencyKey } = options;
+    const body: Record<string, unknown> = { name, mode, access, description };
+    if (webhookUrl) body.webhook_url = webhookUrl;
+    if (webhookSecret) body.webhook_secret = webhookSecret;
+    const extraHeaders: Record<string, string> = {};
+    if (idempotencyKey) extraHeaders["Idempotency-Key"] = idempotencyKey;
+    const res = await fetch(`${this.baseUrl}/v1/channels`, {
+      method: "POST",
+      headers: { ...this.headers, ...extraHeaders },
+      body: JSON.stringify(body),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<Channel>;
+  }
+
+  async getChannel(identifier: string): Promise<Channel> {
+    const res = await fetch(`${this.baseUrl}/v1/channels/${identifier}`, { headers: this.headers });
+    await raiseForStatus(res);
+    return res.json() as Promise<Channel>;
+  }
+
+  // --- Messages ---
+
+  async sendMessage(
+    channelId: string,
+    content: string,
+    options: {
+      actor?: string;
+      actorLabel?: string;
+      metadata?: Record<string, unknown>;
+      idempotencyKey?: string;
+    } = {}
+  ): Promise<Message> {
+    const { actor, actorLabel, metadata, idempotencyKey } = options;
+    const body: Record<string, unknown> = { content };
+    if (actor) body.actor = actor;
+    if (actorLabel) body.actor_label = actorLabel;
+    if (metadata) body.metadata = metadata;
+    const extraHeaders: Record<string, string> = {};
+    if (idempotencyKey) extraHeaders["Idempotency-Key"] = idempotencyKey;
+    const res = await fetch(`${this.baseUrl}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { ...this.headers, ...extraHeaders },
+      body: JSON.stringify(body),
+    });
+    await raiseForStatus(res);
+    const envelope = (await res.json()) as MessageEnvelope;
+    return envelope.message;
+  }
+
+  async listMessages(
+    channelId: string,
+    options: { since?: string; limit?: number } = {}
+  ): Promise<MessageList> {
+    const { since, limit = 50 } = options;
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (since != null) params.set("since", since);
+    const res = await fetch(`${this.baseUrl}/v1/channels/${channelId}/messages?${params}`, {
+      headers: this.headers,
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<MessageList>;
+  }
+
+  async claimMessage(
+    messageId: string,
+    options: { actor: string; metadata?: Record<string, unknown>; idempotencyKey?: string }
+  ): Promise<ClaimResult> {
+    const { actor, metadata, idempotencyKey } = options;
+    const body: Record<string, unknown> = { actor };
+    if (metadata) body.metadata = metadata;
+    const extraHeaders: Record<string, string> = {};
+    if (idempotencyKey) extraHeaders["Idempotency-Key"] = idempotencyKey;
+    const res = await fetch(`${this.baseUrl}/v1/messages/${messageId}/claim`, {
+      method: "POST",
+      headers: { ...this.headers, ...extraHeaders },
+      body: JSON.stringify(body),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<ClaimResult>;
+  }
+
+  async ackMessage(
+    messageId: string,
+    options: { actor: string; metadata?: Record<string, unknown> }
+  ): Promise<AckResult> {
+    const { actor, metadata } = options;
+    const body: Record<string, unknown> = { actor };
+    if (metadata) body.metadata = metadata;
+    const res = await fetch(`${this.baseUrl}/v1/messages/${messageId}/ack`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<AckResult>;
+  }
+
+  // --- Sessions ---
+
+  async createSession(name: string, state: Record<string, unknown> = {}): Promise<Session> {
+    const res = await fetch(`${this.baseUrl}/v1/sessions`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ name, state }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<Session>;
+  }
+
+  async getSession(sessionId: string): Promise<Session> {
+    const res = await fetch(`${this.baseUrl}/v1/sessions/${sessionId}`, { headers: this.headers });
+    await raiseForStatus(res);
+    return res.json() as Promise<Session>;
+  }
+
+  async patchSession(sessionId: string, state: Record<string, unknown>): Promise<Session> {
+    const res = await fetch(`${this.baseUrl}/v1/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: this.headers,
+      body: JSON.stringify({ state }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<Session>;
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/v1/sessions/${sessionId}`, {
+      method: "DELETE",
+      headers: this.headers,
+    });
+    await raiseForStatus(res);
+  }
+
+  // --- Convenience ---
+
+  /**
+   * Poll a channel until a message appears or maxPolls is exhausted.
+   * Returns the first message found, or null.
+   */
+  async pollUntilMessage(
+    channelId: string,
+    options: { since?: string; maxPolls?: number; intervalMs?: number } = {}
+  ): Promise<Message | null> {
+    const { since = "0", maxPolls = 60, intervalMs = 2000 } = options;
+    let cursor = since;
+    for (let i = 0; i < maxPolls; i++) {
+      const result = await this.listMessages(channelId, { since: cursor });
+      if (result.items.length > 0) return result.items[0];
+      cursor = result.next_since ?? cursor;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return null;
+  }
+}

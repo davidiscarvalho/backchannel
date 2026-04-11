@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -47,7 +48,14 @@ class DepotAuthenticator:
 
 
 def http_introspector(url: str | None, service_token: str | None = None, timeout: int = 5) -> Callable[[str], AuthContext]:
+    _cache: dict[str, tuple[AuthContext, float]] = {}
+
     def introspect(raw_key: str) -> AuthContext:
+        key_id = raw_key.split(".", 1)[0] if "." in raw_key else raw_key
+        cached = _cache.get(key_id)
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
+
         if not url:
             raise APIError(
                 503,
@@ -77,7 +85,9 @@ def http_introspector(url: str | None, service_token: str | None = None, timeout
         except URLError as exc:
             raise APIError(502, "depot_unreachable", "API Depot introspection is unavailable") from exc
 
-        return auth_context_from_payload(raw_key, payload)
+        ctx = auth_context_from_payload(raw_key, payload)
+        _cache[ctx.key_id] = (ctx, time.monotonic() + 60)
+        return ctx
 
     return introspect
 

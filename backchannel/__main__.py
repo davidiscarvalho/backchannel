@@ -50,6 +50,12 @@ def main() -> int:
                 )
             except Exception as exc:
                 print(f"cleanup error: {exc}", flush=True)
+            try:
+                delivered = store.deliver_pending_webhooks()
+                if delivered:
+                    print(f"webhooks delivered={delivered}", flush=True)
+            except Exception as exc:
+                print(f"webhook delivery error: {exc}", flush=True)
             time.sleep(args.interval)
 
     if args.command == "cleanup":

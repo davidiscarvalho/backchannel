@@ -274,6 +274,9 @@ class BackchannelStore:
             self._ensure_column(conn, "actors", "owner_id", "TEXT")
             self._ensure_column(conn, "channels", "access", "TEXT NOT NULL DEFAULT 'open'")
             self._ensure_column(conn, "channels", "team_id", "TEXT")
+            self._ensure_column(conn, "channels", "webhook_url", "TEXT")
+            self._ensure_column(conn, "channels", "webhook_secret", "TEXT")
+            self._ensure_column(conn, "messages", "depends_on", "TEXT")
             self._ensure_column(conn, "audit_cleanup_runs", "archived_channel_events", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "audit_cleanup_runs", "purged_channel_events", "INTEGER NOT NULL DEFAULT 0")
             conn.execute(
@@ -290,6 +293,44 @@ class BackchannelStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_idempotency_cache_expiry ON idempotency_cache(expires_at)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pending_webhooks (
+                    id TEXT PRIMARY KEY,
+                    channel_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    webhook_url TEXT NOT NULL,
+                    webhook_secret TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at INTEGER NOT NULL,
+                    delivered_at INTEGER,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pending_webhooks_next ON pending_webhooks(next_attempt_at) WHERE delivered_at IS NULL"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    owner_key_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    state TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_key_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at)"
+            )
             conn.commit()
 
     def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
@@ -305,6 +346,8 @@ class BackchannelStore:
         metadata_schema = self._ensure_mapping(payload.get("metadata_schema", {}), "metadata_schema")
         pinned_message = self._optional_string(payload.get("pinned_message"), allow_none=True)
         related_channels = payload.get("related_channels", [])
+        webhook_url = self._optional_string(payload.get("webhook_url"), allow_none=True)
+        webhook_secret = self._optional_string(payload.get("webhook_secret"), allow_none=True)
         # team_id from payload overrides the one passed by the caller (auth context)
         payload_team_id = self._optional_string(payload.get("team_id"), allow_none=True)
         effective_team_id = payload_team_id if payload_team_id is not None else team_id
@@ -314,8 +357,8 @@ class BackchannelStore:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -328,6 +371,8 @@ class BackchannelStore:
                     description,
                     json.dumps(metadata_schema, sort_keys=True),
                     pinned_message,
+                    webhook_url,
+                    webhook_secret,
                     now,
                     now,
                 ),
@@ -561,10 +606,12 @@ class BackchannelStore:
                 raise APIError(409, "already_claimed", "This message has already been claimed")
 
             claimed_at = to_timestamp(self.now())
-            conn.execute(
-                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ? WHERE id = ?",
+            cursor = conn.execute(
+                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ? WHERE id = ? AND claimed_by_actor_id IS NULL",
                 (actor["id"], claimed_at, message_id),
             )
+            if cursor.rowcount == 0:
+                raise APIError(409, "already_claimed", "This message has already been claimed")
             conn.execute(
                 """
                 INSERT INTO message_events (id, message_id, channel_id, actor_id, event_type, metadata, occurred_at)
@@ -979,6 +1026,20 @@ class BackchannelStore:
         purged_channel_events = conn.execute(
             "DELETE FROM channel_events WHERE expires_at <= ?", (now,)
         ).rowcount
+        # Clean up expired sessions
+        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+        # Clean up delivered or permanently failed webhooks older than 7 days
+        import time as _time
+        week_ago = int(_time.time()) - 7 * 86400
+        conn.execute(
+            "DELETE FROM pending_webhooks WHERE delivered_at IS NOT NULL AND delivered_at < ?",
+            (week_ago,),
+        )
+        conn.execute(
+            "DELETE FROM pending_webhooks WHERE attempts >= 5 AND created_at < ?",
+            (week_ago,),
+        )
+        conn.execute("DELETE FROM idempotency_cache WHERE expires_at <= ?", (now,))
 
         return {
             "archived_messages": archived_messages,
@@ -1370,3 +1431,168 @@ class BackchannelStore:
         if not isinstance(value, dict):
             raise APIError(422, "invalid_object", f"'{field_name}' must be an object")
         return value
+
+    # --- Sessions ---
+
+    def list_sessions(self, key_id: str) -> list[dict[str, Any]]:
+        now = to_timestamp(self.now())
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE owner_key_id = ? AND expires_at > ? ORDER BY created_at DESC",
+                (key_id, now),
+            ).fetchall()
+            return [self._serialize_session(row) for row in rows]
+
+    def create_session(self, key_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        name = self._required_string(payload, "name")
+        state = self._ensure_mapping(payload.get("state", {}), "state")
+        session_id = str(uuid.uuid4())
+        now = self.now()
+        now_ts = to_timestamp(now)
+        expires_at = to_timestamp(now + timedelta(hours=24))
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions (id, owner_key_id, name, state, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, key_id, name, json.dumps(state, sort_keys=True), now_ts, now_ts, expires_at),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return self._serialize_session(row)
+
+    def get_session(self, session_id: str, key_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE id = ? AND owner_key_id = ?", (session_id, key_id)).fetchone()
+            if row is None:
+                raise APIError(404, "session_not_found", f"Session '{session_id}' not found")
+            return self._serialize_session(row)
+
+    def patch_session(self, session_id: str, patch: dict[str, Any], key_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE id = ? AND owner_key_id = ?", (session_id, key_id)).fetchone()
+            if row is None:
+                raise APIError(404, "session_not_found", f"Session '{session_id}' not found")
+            current_state = json.loads(row["state"])
+            new_state = {**current_state, **patch.get("state", patch)}
+            now_ts = to_timestamp(self.now())
+            conn.execute(
+                "UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(new_state, sort_keys=True), now_ts, session_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return self._serialize_session(row)
+
+    def delete_session(self, session_id: str, key_id: str) -> None:
+        with self.connect() as conn:
+            result = conn.execute("DELETE FROM sessions WHERE id = ? AND owner_key_id = ?", (session_id, key_id))
+            if result.rowcount == 0:
+                raise APIError(404, "session_not_found", f"Session '{session_id}' not found")
+            conn.commit()
+
+    def _serialize_session(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "state": json.loads(row["state"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "expires_at": row["expires_at"],
+        }
+
+    # --- Webhooks ---
+
+    def queue_webhook(self, channel_id: str, event_type: str, payload_dict: dict[str, Any], webhook_url: str, webhook_secret: str | None = None) -> None:
+        import time as _time
+        now_epoch = int(_time.time())
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO pending_webhooks (id, channel_id, event_type, payload, webhook_url, webhook_secret, attempts, next_attempt_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                (str(uuid.uuid4()), channel_id, event_type, json.dumps(payload_dict), webhook_url, webhook_secret, now_epoch, now_epoch),
+            )
+            conn.commit()
+
+    def deliver_pending_webhooks(self) -> int:
+        import hashlib
+        import hmac
+        import time as _time
+        from urllib.error import URLError
+        from urllib.request import Request as URLRequest
+        from urllib.request import urlopen
+
+        now_epoch = int(_time.time())
+        delivered = 0
+        with self.connect() as conn:
+            due = conn.execute(
+                "SELECT * FROM pending_webhooks WHERE delivered_at IS NULL AND attempts < 5 AND next_attempt_at <= ? ORDER BY next_attempt_at ASC LIMIT 50",
+                (now_epoch,),
+            ).fetchall()
+
+        for row in due:
+            payload_bytes = row["payload"].encode("utf-8")
+            headers = {"Content-Type": "application/json", "User-Agent": "Backchannel-Webhook/1"}
+            if row["webhook_secret"]:
+                sig = hmac.new(row["webhook_secret"].encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()  # type: ignore[attr-defined]
+                headers["X-Backchannel-Signature"] = f"sha256={sig}"
+            req = URLRequest(url=row["webhook_url"], data=payload_bytes, method="POST")
+            for k, v in headers.items():
+                req.add_header(k, v)
+            success = False
+            try:
+                with urlopen(req, timeout=10) as resp:
+                    if resp.status < 300:
+                        success = True
+            except Exception:
+                pass
+
+            attempt_number = row["attempts"] + 1
+            with self.connect() as conn:
+                if success:
+                    conn.execute(
+                        "UPDATE pending_webhooks SET delivered_at = ?, attempts = ? WHERE id = ?",
+                        (now_epoch, attempt_number, row["id"]),
+                    )
+                    delivered += 1
+                else:
+                    backoff = min(300, 30 * (2 ** attempt_number))
+                    conn.execute(
+                        "UPDATE pending_webhooks SET attempts = ?, next_attempt_at = ? WHERE id = ?",
+                        (attempt_number, now_epoch + backoff, row["id"]),
+                    )
+                conn.commit()
+
+        return delivered
+
+    # --- Observability ---
+
+    def get_observability_metrics(self, key_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            channels_owned = conn.execute(
+                "SELECT COUNT(*) as n FROM channels WHERE owner_key_id = ?", (key_id,)
+            ).fetchone()["n"]
+            messages_sent = conn.execute(
+                """
+                SELECT COUNT(*) as n FROM messages m
+                JOIN channels c ON m.channel_id = c.id
+                WHERE c.owner_key_id = ?
+                """,
+                (key_id,),
+            ).fetchone()["n"]
+            messages_claimed = conn.execute(
+                """
+                SELECT COUNT(*) as n FROM messages m
+                JOIN channels c ON m.channel_id = c.id
+                WHERE c.owner_key_id = ? AND m.claimed_by_actor_id IS NOT NULL
+                """,
+                (key_id,),
+            ).fetchone()["n"]
+            active_sessions = conn.execute(
+                "SELECT COUNT(*) as n FROM sessions WHERE owner_key_id = ? AND expires_at > ?",
+                (key_id, to_timestamp(self.now())),
+            ).fetchone()["n"]
+            return {
+                "key_id": key_id,
+                "channels_owned": channels_owned,
+                "messages_in_owned_channels": messages_sent,
+                "messages_claimed_in_owned_channels": messages_claimed,
+                "active_sessions": active_sessions,
+            }

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "backchannel-sdk"
+version = "0.1.0"
+description = "Python SDK for Backchannel — ephemeral message bus for AI agent coordination"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Oakstack"}]
+keywords = ["backchannel", "multi-agent", "llm", "coordination", "message-bus"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.2"]
+crewai = ["crewai>=0.30"]
+autogen = ["pyautogen>=0.2"]
+llamaindex = ["llama-index-core>=0.10"]
+all = [
+    "langchain-core>=0.2",
+    "crewai>=0.30",
+    "pyautogen>=0.2",
+    "llama-index-core>=0.10",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backchannel_sdk*"]

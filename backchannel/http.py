@@ -95,7 +95,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/\.well-known/openapi\.json$"), False, self.openapi),
             ("GET", re.compile(r"^/first-success-prompt\.txt$"), False, self.first_success_prompt),
             ("GET", re.compile(r"^/llms\.txt$"), False, self.llms_txt),
-            ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap)\.md$"), False, self.read_doc),
+            ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla)\.md$"), False, self.read_doc),
             ("POST", re.compile(r"^/v1/channels$"), True, self.create_channel),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.get_channel),
             ("PATCH", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.patch_channel),
@@ -119,6 +119,13 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/tasks/broadcast$"), True, self.task_broadcast),
             ("POST", re.compile(r"^/v1/tasks/claim-and-ack$"), True, self.task_claim_and_ack),
             ("POST", re.compile(r"^/v1/tasks/create-claimable-session$"), True, self.task_create_claimable_session),
+            ("GET", re.compile(r"^/v1/pricing/estimate$"), False, self.pricing_estimate),
+            ("GET", re.compile(r"^/v1/sessions$"), True, self.list_sessions),
+            ("POST", re.compile(r"^/v1/sessions$"), True, self.create_session),
+            ("GET", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.get_session),
+            ("PATCH", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.patch_session),
+            ("DELETE", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.delete_session),
+            ("GET", re.compile(r"^/v1/observability/metrics$"), True, self.observability_metrics),
         ]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
@@ -133,10 +140,14 @@ class BackchannelApp:
         headers = [
             ("Content-Type", response.content_type),
             ("Content-Length", str(len(response.body))),
+            ("X-RateLimit-Limit", "300"),
+            ("X-RateLimit-Window", "60"),
         ]
         if response.status < 400:
             headers.append(('Link', '</openapi.json>; rel="service-desc"'))
             headers.append(('Link', '</.well-known/ai-manifest.json>; rel="ai-manifest"'))
+        if response.status == 429:
+            headers.append(("Retry-After", "60"))
         headers.extend(response.extra_headers)
         start_response(
             f"{response.status} {HTTPStatus(response.status).phrase}",
@@ -205,86 +216,146 @@ class BackchannelApp:
         return Response(status=200, body=json.dumps(spec, indent=2).encode("utf-8"))
 
     def agent_guide(self, request: Request) -> Response:
-        url = self.invitation_onboarding_url
-        guide = f"""# Backchannel Agent Guide
-AUTH: X-API-Key header required for all /v1/* routes.
-ONBOARDING: {url}
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        guide = f"""# Backchannel — Agent System Prompt
 
-## Channels
-POST /v1/channels {{"name":"<str>","mode":"broadcast|claimable","access":"open|restricted"}}
-GET  /v1/channels/{{id_or_alias}}
-PATCH /v1/channels/{{id_or_alias}}  patchable: name, mode, access, description, metadata_schema, pinned_message, related_channels
-POST /v1/channels/{{id}}/aliases {{"alias":"<str>"}}
-POST /v1/channels/{{id}}/invitations  — returns invitation_id to share (24h expiry)
-POST /v1/channels/{{id}}/messages {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
-GET  /v1/channels/{{id}}/messages?since=<iso-timestamp>&limit=<1-100>
-GET  /v1/channels/{{id}}/members  (owner only)
-POST /v1/channels/{{id}}/members {{"key_id":"<str>"}}  (owner only)
-DELETE /v1/channels/{{id}}/members/{{key_id}}  (owner only)
-GET  /v1/channels/{{id}}/events?since=<iso-timestamp>&limit=<1-100>  (owner only)
+## What it is
+Backchannel is an ephemeral message bus for agent coordination.
+Messages expire after 24 hours. No persistence. No history beyond the TTL.
+Use it for: multi-agent handoffs, broadcast fan-out, temporary shared state.
+Do NOT use it for: persistent storage, human chat, synchronous RPC.
 
-## Actors
-POST /v1/actors {{"name":"<str>","description":"<str>","metadata":{{}}}}
-GET  /v1/actors/{{id_or_alias}}
-POST /v1/actors/{{id}}/aliases {{"alias":"<str>"}}
+## Authentication
+Header: X-API-Key
+Get an instant free key (no sign-up):
+  POST {base}/v1/keys
+  Body: {{"agent_label": "your-agent-name"}}
+  Returns: {{"key": "...", "tier": 0, "expires_at": "..."}}
 
-## Messages
-POST /v1/messages/{{id}}/ack   {{"actor":"<id_or_alias>","metadata":{{}}}}
-POST /v1/messages/{{id}}/claim {{"actor":"<id_or_alias>","metadata":{{}}}}
+## Idempotency
+All write operations accept an optional Idempotency-Key header.
+Repeat the same key within 24h to get the same response without side effects.
+  Idempotency-Key: <uuid-or-any-unique-string>
+  Response includes X-Idempotent-Replay: true if served from cache.
 
-## Invitations
-GET    /v1/channel-invitations/{{invitation_id}}  — resolves + grants access if channel is restricted
-DELETE /v1/channel-invitations/{{invitation_id}}  — revoke
+---
 
-## Channel modes
-broadcast  — any reader sees the same message stream (fan-out)
-claimable  — first actor to claim a message wins; prevents duplicate processing
+## Pattern 1: Claimable task handoff (one producer → one consumer)
 
-## Channel access
-open       — any authenticated key can read/write (default)
-restricted — only channel creator and explicit members can access
+# Step 1 — producer creates a channel
+POST {base}/v1/channels
+X-API-Key: <key>
+{{"name": "task-queue", "mode": "claimable"}}
+→ returns channel.id
 
-## Message TTL
-All messages expire 24 hours after creation. There is no message history.
-Read incrementally with the `since` cursor (ISO timestamp from `next_since`).
+# Step 2 — producer posts a task message
+POST {base}/v1/channels/<channel_id>/messages
+X-API-Key: <key>
+{{"content": "process invoice #123", "actor_label": "producer-agent"}}
+→ returns message.id
 
-## Errors
+# Step 3 — consumer polls for messages
+GET {base}/v1/channels/<channel_id>/messages?since=0
+X-API-Key: <key>
+→ returns messages[], next_since cursor
+
+# Step 4 — consumer claims the message (exclusive ownership)
+POST {base}/v1/messages/<message_id>/claim
+X-API-Key: <key>
+{{"actor": "consumer-agent"}}
+→ 200 {{"status": "claimed", ...}} or 409 already_claimed (another consumer won)
+
+# Step 5 — consumer acks completion
+POST {base}/v1/messages/<message_id>/ack
+X-API-Key: <key>
+{{"actor": "consumer-agent"}}
+
+---
+
+## Pattern 2: Broadcast fan-out (one producer → N consumers)
+
+POST {base}/v1/channels
+{{"name": "results-bus", "mode": "broadcast"}}
+
+POST {base}/v1/channels/<channel_id>/messages
+{{"content": "analysis complete", "actor_label": "orchestrator"}}
+
+# All consumers poll independently — no claiming needed
+GET {base}/v1/channels/<channel_id>/messages?since=<last_next_since>
+
+---
+
+## Full API reference
+
+### Channels
+POST   /v1/channels                          {{"name":"<str>","mode":"broadcast|claimable","access":"open|restricted"}}
+GET    /v1/channels/<id_or_alias>
+PATCH  /v1/channels/<id_or_alias>            patchable: name, mode, access, description, pinned_message
+POST   /v1/channels/<id>/aliases             {{"alias":"<str>"}}
+POST   /v1/channels/<id>/invitations         → returns invitation_id (24h expiry, grants restricted access)
+GET    /v1/channels/<id>/members             owner only
+POST   /v1/channels/<id>/members             {{"key_id":"<str>"}}  owner only
+DELETE /v1/channels/<id>/members/<key_id>    owner only
+GET    /v1/channels/<id>/events              owner only; ?since=<cursor>&limit=<1-100>
+
+### Messages
+POST /v1/channels/<id>/messages   {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
+GET  /v1/channels/<id>/messages   ?since=<iso_or_0>&limit=<1-100> → returns messages[], next_since
+POST /v1/messages/<id>/claim      {{"actor":"<id_or_alias>"}}
+POST /v1/messages/<id>/ack        {{"actor":"<id_or_alias>"}}
+
+### Actors
+POST /v1/actors                   {{"name":"<str>","description":"<str>"}}
+GET  /v1/actors/<id_or_alias>
+POST /v1/actors/<id>/aliases      {{"alias":"<str>"}}
+
+### Keys (self-serve)
+POST /v1/keys                     {{"agent_label":"<str>"}}  → instant Tier 0 key, no auth required
+POST /v1/keys/promote             {{"email":"<str>"}}  → promotes to managed Tier 1 key
+
+### Invitations
+GET    /v1/channel-invitations/<id>   resolves token; grants restricted channel access on first call
+DELETE /v1/channel-invitations/<id>   revoke
+
+---
+
+## Error codes
 401 unauthorized          missing or invalid X-API-Key
 403 channel_access_denied not a member of this restricted channel
 404 *_not_found           resource does not exist
-409 already_claimed       claimable message already taken by another actor
-410 invitation_revoked    invitation was explicitly revoked
+409 already_claimed       claimable message already taken — try the next unclaimed message
+410 message_expired       message TTL has passed
 410 invitation_expired    invitation has passed its 24h expiry
 422 *                     request validation failure (see message field)
-429 rate_limit_exceeded   too many invitation lookups from this IP
+429 rate_limit_exceeded   back off and retry after Retry-After seconds
 """
         return Response(status=200, body=guide.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def well_known(self, request: Request) -> Response:
-        payload = {
-            "name": "Backchannel",
-            "version": "1",
-            "description": "Ephemeral communication rail for AI agents and automations.",
-            "auth_header": "X-API-Key",
-            "auth_onboarding_url": self.invitation_onboarding_url,
-            "base_url": "/v1",
-            "docs_url": "/docs/protocol.md",
-            "openapi_url": "/openapi.json",
-            "agent_guide_url": "/agent-guide",
-        }
-        return self.json_response(200, payload)
+        return Response(
+            status=302,
+            body=b"",
+            content_type="text/plain",
+            extra_headers=[("Location", "/.well-known/ai-manifest.json")],
+        )
 
     def ai_manifest(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
         payload = {
             "name": "Backchannel",
-            "description": "Ephemeral, claimable message bus for AI agent swarms. 24h TTL, broadcast or single-owner channels, perfect for multi-agent handoffs without shared databases.",
+            "description": (
+                "Ephemeral, claimable message bus for AI agent coordination. "
+                "24h TTL, broadcast or single-owner channels — perfect for multi-agent handoffs without shared databases."
+            ),
             "version": "1.0",
-            "base_url": self.base_url or "/",
+            "base_url": base,
             "auth": {
                 "type": "api_key",
                 "header": "X-API-Key",
-                "obtain_url": self.invitation_onboarding_url,
-                "obtain_description": "Sign up at the Oakstack API Depot and generate a key. Tiers available for high-volume agent usage.",
+                "obtain_url": f"{base}/v1/keys",
+                "obtain_description": "POST /v1/keys with an agent_label to receive an instant free key. No sign-up required.",
+                "human_obtain_url": self.invitation_onboarding_url,
+                "human_obtain_description": "Human operators can sign up at the Oakstack API Depot for managed keys and higher tiers.",
             },
             "capabilities": [
                 "multi_agent_coordination",
@@ -293,59 +364,108 @@ Read incrementally with the `since` cursor (ISO timestamp from `next_since`).
                 "session_handoff",
             ],
             "recommended_system_prompt_snippet": (
-                "You have access to Backchannel. Use create_backchannel to create a shared coordination channel, "
-                "post_to_backchannel to send messages, poll_backchannel to read them (pass next_since as cursor), "
-                "and claim_backchannel_message to exclusively own a task. Messages auto-expire after 24h."
+                f"You have access to Backchannel — an ephemeral message bus for agent coordination.\n"
+                f"Base URL: {base}\n"
+                f"Auth: X-API-Key header (get a free key: POST {base}/v1/keys with {{\"agent_label\": \"your-agent\"}})\n\n"
+                "Use Backchannel when:\n"
+                "- One agent hands off work to exactly one other agent → createChannel (mode: claimable) + createMessage + claimMessage\n"
+                "- One agent broadcasts to N consumers → createChannel (mode: broadcast) + createMessage + listMessages\n"
+                "- Agents need temporary shared state without a database → any channel, messages expire after 24h\n\n"
+                "Never use Backchannel for: persistent storage, human chat, or anything that needs to survive beyond 24h."
             ),
-            "openapi_url": "/openapi.json",
+            "openapi_url": f"{base}/openapi.json",
+            "agent_guide_url": f"{base}/agent-guide",
             "supported_frameworks": ["LangGraph", "CrewAI", "AutoGen", "LlamaIndex", "Semantic Kernel"],
         }
         return self.json_response(200, payload)
 
     def first_success_prompt(self, request: Request) -> Response:
-        url = self.base_url or "https://backchannel.oakstack.eu"
+        base = self.base_url or "https://backchannel.oakstack.eu"
         content = f"""# Backchannel — First Success Prompt
-# Copy-paste this into your agent system prompt to get started in under 45 seconds.
+# Copy-paste into your agent's system prompt. First call in under 60 seconds.
 
 SYSTEM:
-You have access to Backchannel at {url}.
-Authentication: set the X-API-Key header to your API Depot key.
-OpenAPI spec: {url}/openapi.json
+You have access to Backchannel at {base}.
+Auth: X-API-Key header. If you don't have a key yet, get one instantly:
+  POST {base}/v1/keys with body {{"agent_label": "your-name"}} (no prior auth needed)
 
 Backchannel is an ephemeral message bus for agent coordination.
-Messages expire after 24 hours. Channels are broadcast (fan-out) or claimable (one agent owns a task).
+Messages expire after 24 hours. No history, no persistence.
+Channels are broadcast (fan-out to all readers) or claimable (exactly one agent owns each task).
+
+To safely retry any write, pass an Idempotency-Key header with a unique string.
 
 USER:
-1. Create a claimable channel called "test-handoff".
-2. Post the message "hello from agent" to it with actor_label "test-sender".
-3. List messages in the channel to confirm delivery.
-4. Claim the message using actor_label "test-receiver".
-5. Report the message ID and claim status.
+Work through this sequence to confirm Backchannel is working:
+
+1. Create a claimable channel:
+   POST {base}/v1/channels
+   Body: {{"name": "test-handoff", "mode": "claimable"}}
+   Save the returned channel id.
+
+2. Send a message to it (broadcast role):
+   POST {base}/v1/channels/<channel_id>/messages
+   Body: {{"content": "hello from sender", "actor_label": "test-sender"}}
+   Save the returned message id.
+
+3. List messages to confirm delivery:
+   GET {base}/v1/channels/<channel_id>/messages?since=0
+   Expect: messages array with your message; note next_since for future polls.
+
+4. Claim the message (exactly one agent wins):
+   POST {base}/v1/messages/<message_id>/claim
+   Body: {{"actor": "test-receiver"}}
+   Expect: {{"status": "claimed", "message": {{...}}}}
+   If 409 already_claimed, another agent won — that's the guarantee working correctly.
+
+5. Acknowledge completion:
+   POST {base}/v1/messages/<message_id>/ack
+   Body: {{"actor": "test-receiver"}}
+
+Report the channel id, message id, claim status, and ack status.
 """
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def llms_txt(self, request: Request) -> Response:
-        url = self.invitation_onboarding_url
+        base = self.base_url or "https://backchannel.oakstack.eu"
         content = f"""# Backchannel
-> Ephemeral communication rail for AI agents and automations.
-> Messages expire after 24 hours. No history. No persistence.
+> Ephemeral claimable message bus for AI agent coordination.
 
-## Agent Integration
-- Agent guide (text): /agent-guide
-- OpenAPI 3.1 spec: /openapi.json
-- Protocol docs: /docs/protocol.md
-- Service metadata: /.well-known/backchannel.json
+## When to use
+- Multi-agent task handoff (one producer, one consumer): use claimable channel
+- Fan-out coordination (one producer, N consumers): use broadcast channel
+- Temporary shared state between agents without a database: use any channel
+
+## When NOT to use
+- Persistent storage (24h TTL is hard — messages are gone after expiry)
+- Human chat (no UI, no presence, no notifications)
+- Synchronous RPC (use HTTP directly)
+- Anything requiring audit trails or long-term history
+
+## Quickstart (no sign-up required)
+POST {base}/v1/keys              {{"agent_label":"my-agent"}}  → instant free key
+POST {base}/v1/channels          {{"name":"work-queue","mode":"claimable"}}
+POST {base}/v1/channels/<id>/messages  {{"content":"task payload","actor_label":"sender"}}
+GET  {base}/v1/channels/<id>/messages?since=0  → messages[], next_since
+POST {base}/v1/messages/<id>/claim     {{"actor":"worker"}}  → exclusive ownership
 
 ## Authentication
-API keys issued by the API Depot.
 Header: X-API-Key
-Onboarding: {url}
+Self-serve: POST /v1/keys (instant Tier 0, no sign-up)
+Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
 
-## Key Concepts
-- Channels: broadcast (fan-out) or claimable (single owner per message)
-- Messages: 24h TTL, read via since-cursor pagination
-- Invitations: shareable 24h tokens that grant channel access on resolution
-- Access control: channels are open (default) or restricted to members
+## Key concepts
+- Channels: broadcast (fan-out) or claimable (one owner per message)
+- Messages: 24h TTL, read with since-cursor (pass next_since from previous response)
+- Claim: atomic — exactly one caller wins, 409 if already taken
+- Idempotency: pass Idempotency-Key header to safely retry writes
+- Invitations: shareable 24h tokens that grant restricted channel access
+
+## Resources
+- Agent guide (copy-paste system prompt): {base}/agent-guide
+- OpenAPI 3.1 spec: {base}/openapi.json
+- Protocol docs: {base}/docs/protocol.md
+- First-success prompt: {base}/first-success-prompt.txt
 """
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
@@ -447,7 +567,12 @@ Onboarding: {url}
     def issue_key(self, request: Request) -> Response:
         self.key_issuance_rate_limiter.check(request.remote_addr)
         if not self.depot_internal_base_url:
-            raise APIError(503, "key_issuance_unavailable", "Self-serve key issuance is not configured on this instance")
+            raise APIError(
+                503,
+                "key_issuance_unavailable",
+                f"Self-serve key issuance is not available on this instance. "
+                f"Obtain a key at {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}",
+            )
         body = request.json()
         agent_label = body.get("agent_label", "")
         if not isinstance(agent_label, str) or not agent_label.strip():
@@ -545,6 +670,75 @@ Onboarding: {url}
             team_id=request.auth.team_id,
         )
         return self.json_response(201, {"channel": channel, "invitation": invitation})
+
+    def pricing_estimate(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        tiers = [
+            {
+                "tier": 0,
+                "name": "Test",
+                "description": "Instant key, no sign-up required. 48-hour TTL. One active key per agent_label.",
+                "price_eur_monthly": None,
+                "current_price_eur_monthly": 0,
+                "launch_discount": True,
+                "launch_discount_label": "free for limited time",
+                "obtain_url": f"{base}/v1/keys",
+                "obtain_method": "POST /v1/keys with {\"agent_label\": \"<name>\"}",
+            },
+            {
+                "tier": 1,
+                "name": "Free",
+                "description": "Permanent key. Standard rate limits. Managed via API Depot.",
+                "price_eur_monthly": 9.99,
+                "current_price_eur_monthly": 0,
+                "launch_discount": True,
+                "launch_discount_label": "free for limited time",
+                "obtain_url": self.invitation_onboarding_url or f"{base}/v1/keys/promote",
+                "obtain_method": "Sign up at API Depot or promote a Tier 0 key via POST /v1/keys/promote",
+            },
+            {
+                "tier": 2,
+                "name": "Pro",
+                "description": "High rate limits. Team quotas. Priority support.",
+                "price_eur_monthly": 39.99,
+                "current_price_eur_monthly": 0,
+                "launch_discount": True,
+                "launch_discount_label": "free for limited time",
+                "obtain_url": self.invitation_onboarding_url,
+                "obtain_method": "Sign up at API Depot and select Pro tier",
+            },
+        ]
+        return self.json_response(200, {
+            "tiers": tiers,
+            "note": "Launch discount active — all paid tiers are free for a limited time. Check this endpoint for updates.",
+        })
+
+    # --- Sessions (item19) ---
+
+    def list_sessions(self, request: Request) -> Response:
+        sessions = self.store.list_sessions(key_id=request.auth.key_id)
+        return self.json_response(200, {"items": sessions})
+
+    def create_session(self, request: Request) -> Response:
+        body = request.json()
+        session = self.store.create_session(request.auth.key_id, body)
+        return self.json_response(201, session)
+
+    def get_session(self, request: Request, session_id: str) -> Response:
+        session = self.store.get_session(session_id, key_id=request.auth.key_id)
+        return self.json_response(200, session)
+
+    def patch_session(self, request: Request, session_id: str) -> Response:
+        session = self.store.patch_session(session_id, request.json(), key_id=request.auth.key_id)
+        return self.json_response(200, session)
+
+    def delete_session(self, request: Request, session_id: str) -> Response:
+        self.store.delete_session(session_id, key_id=request.auth.key_id)
+        return self.json_response(200, {"status": "deleted"})
+
+    def observability_metrics(self, request: Request) -> Response:
+        metrics = self.store.get_observability_metrics(request.auth.key_id)
+        return self.json_response(200, metrics)
 
     def json_response(self, status: int, payload: dict[str, Any]) -> Response:
         return Response(status=status, body=json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"))

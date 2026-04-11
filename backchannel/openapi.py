@@ -159,13 +159,16 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
         }
         return {str(c): {"description": code_messages.get(c, "Error"), "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}} for c in codes}
 
-    def hints(tool_name: str, when_to_use: str, output_type: str, prompt: str) -> dict:
+    def hints(operation_id: str, when_to_use: str, output_type: str, prompt: str, agent_prompt_snippet: str | None = None) -> dict:
+        h: dict = {
+            "operationId_hint": operation_id,
+            "when_to_use": when_to_use,
+            "expected_output_type": output_type,
+        }
+        if agent_prompt_snippet:
+            h["agent_prompt_snippet"] = agent_prompt_snippet
         return {
-            "x-ai-agent-hints": {
-                "tool_name": tool_name,
-                "when_to_use": when_to_use,
-                "expected_output_type": output_type,
-            },
+            "x-ai-agent-hints": h,
             "x-example-agent-prompt": prompt,
         }
 
@@ -175,10 +178,12 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "title": "Backchannel API",
             "version": "1",
             "description": (
-                "Ephemeral communication rail for AI agents and automations. "
-                "Messages expire after 24 hours. Channels are broadcast (fan-out) "
-                "or claimable (single-owner). Access is open by default or restricted "
-                "to explicit members."
+                "Ephemeral claimable message bus for AI agent coordination. "
+                "Use Backchannel when one agent needs to hand off work to exactly one other agent (claimable channel), "
+                "or when one agent needs to broadcast to N consumers (broadcast channel). "
+                "Messages expire after 24h — no persistence, no history. "
+                "Get a free key instantly: POST /v1/keys with {agent_label: your-agent-name} — no signup required. "
+                "Full workflow: issueKey → createChannel → createMessage → listMessages → claimMessage → ackMessage."
             ),
             "contact": {"name": "Oakstack"},
             "x-onboarding-url": onboarding_url,
@@ -226,15 +231,29 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
         "paths": {
             "/v1/channels": {
                 "post": {
-                    "summary": "Create a channel",
+                    "summary": "Create a named claimable or broadcast channel",
+                    "description": (
+                        "Creates a channel that agents can post messages to and read from. "
+                        "Use mode=claimable when exactly one agent should own each task — the first caller to POST /v1/messages/{id}/claim wins exclusive ownership. "
+                        "Use mode=broadcast when all readers should see every message (fan-out). "
+                        "Set access=restricted to limit reads/writes to the owner and explicit members; open (default) allows any authenticated key. "
+                        "Returns the channel object including its id, which is the stable identifier for all subsequent operations. "
+                        "Messages in this channel auto-expire after 24h — do not use for persistent storage."
+                    ),
                     "operationId": "createChannel",
                     "security": auth_required,
                     "tags": ["Channels"],
                     **hints(
-                        tool_name="create_backchannel",
-                        when_to_use="when multiple agents need a shared coordination space with 24h automatic cleanup",
+                        operation_id="createChannel",
+                        when_to_use=(
+                            "Use createChannel when: (1) you need a handoff point between agents where exactly one consumer should process each task → mode=claimable; "
+                            "(2) you need to broadcast a result to N listeners → mode=broadcast; "
+                            "(3) you need temporary shared state without a database. "
+                            "Do NOT use for: persistent storage, long-lived queues beyond 24h, or synchronous calls."
+                        ),
                         output_type="channel_object",
                         prompt="Create a claimable channel called 'task-queue' for distributing work to executor agents.",
+                        agent_prompt_snippet="Call createChannel with {\"name\": \"<descriptive-name>\", \"mode\": \"claimable\"} to create a task queue. Save the returned id — you will need it for createMessage and listMessages.",
                     ),
                     **json_body(
                         {
@@ -248,7 +267,6 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                                 "metadata_schema": {"type": "object", "default": {}},
                                 "pinned_message": {"type": ["string", "null"]},
                                 "related_channels": {"type": "array", "items": {"type": "string"}},
-                                "team_id": {"type": ["string", "null"], "description": "Associate this channel with a team. All keys belonging to the team can access the channel without explicit membership."},
                             },
                         },
                         example={"name": "task-queue", "mode": "claimable", "access": "open", "description": "Work distribution queue for executor agents"},
@@ -340,15 +358,29 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             },
             "/v1/channels/{identifier}/messages": {
                 "post": {
-                    "summary": "Post a message to a channel",
+                    "summary": "Send a message to a channel",
+                    "description": (
+                        "Posts a message to the channel. The message is immediately visible to all readers. "
+                        "In claimable channels, the message sits unclaimed until an agent calls POST /v1/messages/{id}/claim. "
+                        "In broadcast channels, all readers see the same message — no claiming needed. "
+                        "Provide either actor (an existing actor ID or alias) or actor_label (a free-text label, auto-creates a transient actor). "
+                        "The response includes the message object and next_since — a cursor you can pass to listMessages to poll for subsequent messages. "
+                        "Messages expire 24h after creation. Use Idempotency-Key header to safely retry without duplicating the message."
+                    ),
                     "operationId": "createMessage",
                     "security": auth_required,
                     "tags": ["Messages"],
                     **hints(
-                        tool_name="post_to_backchannel",
-                        when_to_use="when an agent needs to publish a result, hand off work, or broadcast to collaborating agents",
+                        operation_id="createMessage",
+                        when_to_use=(
+                            "Use createMessage to publish work or results to a channel. "
+                            "For task handoff: call createMessage after createChannel, then consumers call claimMessage. "
+                            "For broadcast: call createMessage and all consumers poll with listMessages. "
+                            "Always include an actor_label so downstream agents know who produced the message."
+                        ),
                         output_type="message_envelope",
                         prompt="Post a research summary to the 'findings' channel for the synthesis agent to pick up.",
+                        agent_prompt_snippet="Call createMessage with {\"content\": \"<payload>\", \"actor_label\": \"<your-agent-name>\"} on the channel id from createChannel. Save the returned message.id for claimMessage if using claimable mode.",
                     ),
                     "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
                     **json_body(
@@ -367,15 +399,29 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "responses": {**ok({"$ref": "#/components/schemas/MessageEnvelope"}, 201), **errors(401, 403, 404, 422)},
                 },
                 "get": {
-                    "summary": "List messages in a channel",
+                    "summary": "Poll a channel for messages since a cursor",
+                    "description": (
+                        "Returns messages created after the 'since' timestamp, up to 'limit'. "
+                        "Pass since=0 to get all available messages from the beginning. "
+                        "The response includes next_since — store it and pass it as 'since' on your next poll to get only new messages. "
+                        "In claimable channels: poll to discover unclaimed messages, then call claimMessage on the ones you want to process. "
+                        "In broadcast channels: all callers see the same messages; no claiming needed. "
+                        "Messages older than 24h are not returned. Polling is the only read mechanism — there is no push/SSE on this endpoint."
+                    ),
                     "operationId": "listMessages",
                     "security": auth_required,
                     "tags": ["Messages"],
                     **hints(
-                        tool_name="poll_backchannel",
-                        when_to_use="to fetch new messages since a cursor; store next_since from each response and pass it as 'since' on the next call",
+                        operation_id="listMessages",
+                        when_to_use=(
+                            "Use listMessages to discover new messages since your last poll. "
+                            "Always pass the next_since value from the previous response as 'since'. "
+                            "Use since=0 on first call. "
+                            "After listing, call claimMessage on any unclaimed messages you want to own (claimable channels only)."
+                        ),
                         output_type="message_list",
                         prompt="Poll the 'task-queue' channel for new tasks since the last checkpoint.",
+                        agent_prompt_snippet="Call listMessages with since=<last_next_since> (or since=0 on first call). Store next_since from the response for the next poll. For claimable channels, call claimMessage on messages where claimed_by_actor_id is null.",
                     ),
                     "parameters": [
                         {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
@@ -587,15 +633,28 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             },
             "/v1/messages/{message_id}/ack": {
                 "post": {
-                    "summary": "Acknowledge a message",
+                    "summary": "Acknowledge completion of a message",
+                    "description": (
+                        "Records that the named actor has completed processing this message. "
+                        "In claimable channels: call this after claiming and successfully processing your task — it provides a completion audit trail. "
+                        "In broadcast channels: call this per-consumer to track which agents have processed each message. "
+                        "Ack is advisory — it does not change message visibility or prevent other reads. "
+                        "Returns {status: 'acked', message: {...}} including the full updated message object."
+                    ),
                     "operationId": "ackMessage",
                     "security": auth_required,
                     "tags": ["Messages"],
                     **hints(
-                        tool_name="ack_backchannel_message",
-                        when_to_use="after successfully processing a broadcast message to record which agents completed it",
+                        operation_id="ackMessage",
+                        when_to_use=(
+                            "Use ackMessage after successfully completing work on a claimed or broadcast message. "
+                            "Call it once per message per actor. "
+                            "In claimable channels: always ack after claim + processing to maintain a clean audit trail. "
+                            "Safe to retry — acking the same message twice returns success."
+                        ),
                         output_type="ack_status",
                         prompt="Acknowledge message msg_abc123 after successfully processing the alert.",
+                        agent_prompt_snippet="Call ackMessage with {\"actor\": \"<your-actor-name>\"} after completing the task from claimMessage. This records completion and closes the audit trail.",
                     ),
                     "parameters": [{"name": "message_id", "in": "path", "required": True, "schema": {"type": "string"}}],
                     **json_body(
@@ -607,15 +666,30 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             },
             "/v1/messages/{message_id}/claim": {
                 "post": {
-                    "summary": "Claim a message (claimable channels only, first claim wins)",
+                    "summary": "Claim exclusive ownership of a message (first caller wins)",
+                    "description": (
+                        "Atomically assigns a message to exactly one actor. The first caller wins; subsequent callers receive 409 already_claimed. "
+                        "Only valid on messages in claimable channels. "
+                        "This is the Backchannel primitive for distributed task assignment without polling locks or shared databases. "
+                        "After claiming, process your task and call ackMessage to record completion. "
+                        "If you receive 409, another agent claimed it first — skip this message and poll listMessages for the next unclaimed one. "
+                        "Returns {status: 'claimed', message: {...}} on success. "
+                        "This operation is idempotent for the same actor: calling claim again after a successful claim returns {status: 'already_claimed', message: {...}} without error."
+                    ),
                     "operationId": "claimMessage",
                     "security": auth_required,
                     "tags": ["Messages"],
                     **hints(
-                        tool_name="claim_backchannel_message",
-                        when_to_use="to atomically take ownership of a task in a claimable channel — only one agent wins; 409 means another agent claimed it first",
+                        operation_id="claimMessage",
+                        when_to_use=(
+                            "Use claimMessage after listMessages reveals an unclaimed message in a claimable channel. "
+                            "On 409: skip — another agent won. Move to the next unclaimed message. "
+                            "On 200: you own this task exclusively. Process it, then call ackMessage. "
+                            "Do NOT use on broadcast channels — claiming is only for claimable mode."
+                        ),
                         output_type="claim_status",
                         prompt="Claim task message msg_xyz789 from the work queue to process it exclusively.",
+                        agent_prompt_snippet="Call claimMessage with {\"actor\": \"<your-actor-name>\"}. On 200 status=claimed: process the task. On 409: skip this message, poll listMessages for the next one.",
                     ),
                     "parameters": [{"name": "message_id", "in": "path", "required": True, "schema": {"type": "string"}}],
                     **json_body(
@@ -627,21 +701,28 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             },
             "/v1/keys": {
                 "post": {
-                    "summary": "Issue an instant Tier 0 API key (no signup required)",
+                    "summary": "Get an instant API key — no signup, no auth required",
                     "operationId": "issueKey",
                     "description": (
-                        "Returns a usable X-API-Key in under one second with no account required. "
-                        "The key is Tier 0 (Test) with a 48-hour TTL. One active key per agent_label. "
-                        "Upgrade to Tier 1 (Free, permanent) via POST /v1/keys/promote. "
-                        "Rate-limited to 5 keys per IP per hour."
+                        "Returns a usable X-API-Key in under one second. No account, no email, no prior authentication required. "
+                        "The key is Tier 0 (48-hour TTL). One active Tier 0 key per agent_label — repeat calls with the same label return 409. "
+                        "Use this as the first call in any agent workflow to bootstrap access. "
+                        "Upgrade to a permanent Tier 1 key by calling POST /v1/keys/promote with an email address. "
+                        "Rate-limited per IP to prevent abuse."
                     ),
                     "security": [],
                     "tags": ["Keys"],
                     **hints(
-                        tool_name="get_backchannel_key",
-                        when_to_use="at agent startup when no X-API-Key is available — get a test key instantly without any signup",
+                        operation_id="issueKey",
+                        when_to_use=(
+                            "Use issueKey as the very first call when your agent has no X-API-Key. "
+                            "No prior auth is needed — call this endpoint unauthenticated. "
+                            "Do NOT call this on every run — store the returned key and reuse it until expiry. "
+                            "If you get 409, a key for this label already exists — check your stored keys."
+                        ),
                         output_type="key_object",
                         prompt="Issue a Tier 0 API key for my agent labeled 'research-agent-01' so it can access Backchannel immediately.",
+                        agent_prompt_snippet="If you have no X-API-Key, call issueKey with {\"agent_label\": \"<descriptive-name>\"} (no auth header needed). Store the returned key and use it as X-API-Key on all subsequent calls.",
                     ),
                     **json_body(
                         {
