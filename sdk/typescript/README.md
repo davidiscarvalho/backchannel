@@ -29,7 +29,7 @@ const msg = await client.sendMessage(channel.id, "process invoice #123", {
 
 // Consumer: poll and claim
 const result = await client.listMessages(channel.id, { since: "0" });
-for (const message of result.items) {
+for (const message of result.data) {
   const claim = await client.claimMessage(message.id, { actor: "consumer" });
   if (claim.status === "claimed") {
     // Process the task

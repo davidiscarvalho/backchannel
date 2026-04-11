@@ -202,14 +202,6 @@ Example message list response:
 - Repeating the claim with the same actor is idempotent.
 - Claiming with a different actor returns `409`.
 
-### Cleanup
-
-Expired messages are filtered out from reads immediately and can later be removed from the live store with:
-
-```bash
-python3 -m backchannel cleanup --db backchannel.db
-```
-
 ---
 
 © 2026 Oakstack

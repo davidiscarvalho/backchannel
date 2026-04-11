@@ -59,7 +59,7 @@ def make_backchannel_functions(client: BackchannelClient) -> list[dict[str, Any]
         {
             "name": "backchannel_list_messages",
             "callable": list_messages,
-            "description": "List messages in a Backchannel channel. Pass next_since from the previous response as 'since'.",
+            "description": "List messages in a Backchannel channel. Pass next_cursor from the previous response as 'since'.",
             "parameters": {
                 "type": "object",
                 "properties": {

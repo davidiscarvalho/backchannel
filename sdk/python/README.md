@@ -35,7 +35,7 @@ msg = client.send_message(channel["id"], "process invoice #123", actor_label="pr
 
 # Consumer: poll and claim
 result = client.list_messages(channel["id"], since="0")
-for message in result["items"]:
+for message in result["data"]:
     claim = client.claim_message(message["id"], actor="consumer")
     if claim["status"] == "claimed":
         # Process the task

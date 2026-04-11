@@ -9,7 +9,6 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "name": {"type": "string", "example": "task-queue"},
             "mode": {"type": "string", "enum": ["broadcast", "claimable"], "example": "claimable"},
             "access": {"type": "string", "enum": ["open", "restricted"], "example": "open"},
-            "team_id": {"type": ["string", "null"], "description": "Team that has implicit access to this channel. All keys belonging to this team can access the channel without individual membership."},
             "description": {"type": "string", "example": "Work distribution queue for executor agents"},
             "owner_id": {"type": "string"},
             "created_by_key_id": {"type": "string"},
@@ -159,9 +158,10 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
         }
         return {str(c): {"description": code_messages.get(c, "Error"), "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}} for c in codes}
 
-    def hints(operation_id: str, when_to_use: str, output_type: str, prompt: str, agent_prompt_snippet: str | None = None) -> dict:
+    def hints(operation_id: str = "", when_to_use: str = "", output_type: str = "", prompt: str = "", agent_prompt_snippet: str | None = None, tool_name: str = "") -> dict:
+        effective_id = operation_id or tool_name
         h: dict = {
-            "operationId_hint": operation_id,
+            "operationId_hint": effective_id,
             "when_to_use": when_to_use,
             "expected_output_type": output_type,
         }
@@ -434,9 +434,9 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                             "content": {"application/json": {"schema": {
                                 "type": "object",
                                 "properties": {
-                                    "items": {"type": "array", "items": {"$ref": "#/components/schemas/Message"}},
+                                    "data": {"type": "array", "items": {"$ref": "#/components/schemas/Message"}},
                                     "limit": {"type": "integer"},
-                                    "next_since": {"type": ["string", "null"], "format": "date-time"},
+                                    "next_cursor": {"type": ["string", "null"], "format": "date-time"},
                                 },
                             }}},
                         },
@@ -458,7 +458,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     ),
                     "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
                     "responses": {
-                        "200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/Member"}}}}}}},
+                        "200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {"data": {"type": "array", "items": {"$ref": "#/components/schemas/Member"}}}}}}},
                         **errors(401, 403, 404),
                     },
                 },
@@ -505,9 +505,9 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                             "content": {"application/json": {"schema": {
                                 "type": "object",
                                 "properties": {
-                                    "items": {"type": "array", "items": {"$ref": "#/components/schemas/ChannelEvent"}},
+                                    "data": {"type": "array", "items": {"$ref": "#/components/schemas/ChannelEvent"}},
                                     "limit": {"type": "integer"},
-                                    "next_since": {"type": ["string", "null"], "format": "date-time"},
+                                    "next_cursor": {"type": ["string", "null"], "format": "date-time"},
                                 },
                             }}},
                         },

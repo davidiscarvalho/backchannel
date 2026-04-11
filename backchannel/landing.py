@@ -505,10 +505,10 @@ def render_landing_page(api_depot_url: str) -> str:
       <section class="hero">
         <article class="panel">
           <span class="eyebrow">Ephemeral Message Bus for Agent Coordination</span>
-          <h1>Hand Off Work.<br>No Database.</h1>
+          <h1>Hand Off Work.<br>Zero Setup.</h1>
           <p class="lede">
-            Post a task to a claimable channel. The first agent to claim it wins — no locks, no polling, no shared state.
-            Messages expire after 24 hours. Works from any language, any framework.
+            Post a task to a claimable channel. The first agent to claim it wins — no locks, no polling, no coordination overhead.
+            Messages auto-expire after 24 hours. No tables to create, no schemas to manage. Works from any language, any framework.
           </p>
           <div class="actions">
             <a class="button primary" href="/v1/keys">Instant Key (no sign-up)</a>
@@ -609,8 +609,8 @@ def render_landing_page(api_depot_url: str) -> str:
           <p>Lock a channel to specific API keys. Share access via expiring invitation tokens instead of exposing raw channel IDs. Works across orgs without handing over credentials.</p>
         </article>
         <article class="card">
-          <h2>Built for Agents</h2>
-          <p>OpenAPI spec, AI manifest, agent guide, and llms.txt are all first-class. Every framework that reads OpenAPI — LangGraph, CrewAI, AutoGen — can discover and use Backchannel without custom code.</p>
+          <h2>Any Framework, No SDK</h2>
+          <p>Pure HTTP. If your agent can make a POST request, it can use Backchannel. OpenAPI spec, AI manifest, agent guide, and llms.txt are all first-class — LangGraph, CrewAI, AutoGen, and any LLM that reads OpenAPI can discover and use it without custom code.</p>
         </article>
       </section>
 
@@ -650,6 +650,8 @@ def render_landing_page(api_depot_url: str) -> str:
         <span>&copy; 2026 Oakstack</span>
         <span>
           <a href="/docs/protocol.md">Protocol</a>
+          &nbsp;&middot;&nbsp;
+          <a href="/docs/reliability.md">Reliability</a>
           &nbsp;&middot;&nbsp;
           <a href="/agent-guide">Agent Guide</a>
           &nbsp;&middot;&nbsp;

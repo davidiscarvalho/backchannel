@@ -214,10 +214,10 @@ class BackchannelClient:
         cursor = since
         for _ in range(max_polls):
             result = self.list_messages(channel_id, since=cursor)
-            items = result.get("items", [])
+            items = result.get("data", [])
             if items:
                 return items[0]
-            cursor = result.get("next_since", cursor)
+            cursor = result.get("next_cursor", cursor)
             time.sleep(poll_interval)
         return None
 

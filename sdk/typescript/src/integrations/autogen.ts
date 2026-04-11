@@ -30,7 +30,7 @@ export function makeBackchannelFunctions(client: BackchannelClient): AutoGenFunc
     },
     {
       name: "backchannel_list_messages",
-      description: "List messages in a Backchannel channel. Pass next_since as since.",
+      description: "List messages in a Backchannel channel. Pass next_cursor as since on subsequent calls.",
       parameters: {
         type: "object",
         properties: {

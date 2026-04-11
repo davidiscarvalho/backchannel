@@ -22,13 +22,13 @@ export interface Message {
 
 export interface MessageEnvelope {
   message: Message;
-  next_since: string | null;
+  next_cursor: string | null;
 }
 
 export interface MessageList {
-  items: Message[];
+  data: Message[];
   limit: number;
-  next_since: string | null;
+  next_cursor: string | null;
 }
 
 export interface ClaimResult {

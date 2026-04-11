@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from io import BytesIO
@@ -75,6 +76,7 @@ class BackchannelApp:
         self.base_url = os.environ.get("BACKCHANNEL_BASE_URL", "")
         self.depot_internal_base_url = os.environ.get("BACKCHANNEL_DEPOT_INTERNAL_BASE_URL", "")
         self.depot_service_token = os.environ.get("BACKCHANNEL_DEPOT_SERVICE_TOKEN", "")
+        self.demo_key = os.environ.get("BACKCHANNEL_DEMO_KEY", "")
         self.invitation_rate_limiter = invitation_rate_limiter or SlidingWindowRateLimiter(
             limit=10,
             window_seconds=60,
@@ -95,7 +97,12 @@ class BackchannelApp:
             ("GET", re.compile(r"^/\.well-known/openapi\.json$"), False, self.openapi),
             ("GET", re.compile(r"^/first-success-prompt\.txt$"), False, self.first_success_prompt),
             ("GET", re.compile(r"^/llms\.txt$"), False, self.llms_txt),
-            ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla)\.md$"), False, self.read_doc),
+            ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors)\.md$"), False, self.read_doc),
+            ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
+            ("GET", re.compile(r"^/compare$"), False, self.compare),
+            ("GET", re.compile(r"^/robots\.txt$"), False, self.robots_txt),
+            ("GET", re.compile(r"^/\.well-known/ai-plugin\.json$"), False, self.ai_plugin),
+            ("GET", re.compile(r"^/\.well-known/agent-policy\.json$"), False, self.agent_policy),
             ("POST", re.compile(r"^/v1/channels$"), True, self.create_channel),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.get_channel),
             ("PATCH", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.patch_channel),
@@ -114,6 +121,9 @@ class BackchannelApp:
             ("DELETE", re.compile(r"^/v1/channel-invitations/(?P<invitation_id>[^/]+)$"), True, self.revoke_channel_invitation),
             ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/ack$"), True, self.ack_message),
             ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/claim$"), True, self.claim_message),
+            ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/release$"), True, self.release_message),
+            ("DELETE", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)$"), True, self.delete_message),
+            ("DELETE", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.delete_channel),
             ("POST", re.compile(r"^/v1/keys$"), False, self.issue_key),
             ("POST", re.compile(r"^/v1/keys/promote$"), True, self.promote_key),
             ("POST", re.compile(r"^/v1/tasks/broadcast$"), True, self.task_broadcast),
@@ -126,20 +136,33 @@ class BackchannelApp:
             ("PATCH", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.patch_session),
             ("DELETE", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.delete_session),
             ("GET", re.compile(r"^/v1/observability/metrics$"), True, self.observability_metrics),
+            ("GET", re.compile(r"^/v1/keys/me$"), True, self.keys_me),
+            ("GET", re.compile(r"^/account/usage$"), True, self.account_usage),
         ]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
+        request_id = str(uuid.uuid4())
+        docs_base = self.base_url or "https://backchannel.oakstack.eu"
         try:
             response = self.dispatch(environ)
         except APIError as exc:
-            response = self.json_response(exc.status, exc.to_payload())
+            payload = exc.to_payload()
+            payload["request_id"] = request_id
+            payload["documentation_url"] = f"{docs_base}/docs/errors.md#{exc.error.replace('_', '-')}"
+            response = self.json_response(exc.status, payload)
         except Exception as exc:  # pragma: no cover - defensive safeguard
-            payload = {"error": "internal_server_error", "message": str(exc)}
+            payload = {
+                "error": "internal_server_error",
+                "message": str(exc),
+                "request_id": request_id,
+                "documentation_url": f"{docs_base}/docs/errors.md#internal-server-error",
+            }
             response = self.json_response(500, payload)
 
         headers = [
             ("Content-Type", response.content_type),
             ("Content-Length", str(len(response.body))),
+            ("X-Request-Id", request_id),
             ("X-RateLimit-Limit", "300"),
             ("X-RateLimit-Window", "60"),
         ]
@@ -201,7 +224,18 @@ class BackchannelApp:
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def health(self, request: Request) -> Response:
-        return self.json_response(200, {"status": "ok"})
+        import time
+        t0 = time.monotonic()
+        with self.store.connect() as conn:
+            conn.execute("SELECT 1")
+        db_latency_ms = round((time.monotonic() - t0) * 1000, 1)
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        return self.json_response(200, {
+            "status": "ok",
+            "db_latency_ms": db_latency_ms,
+            "version": "1.0",
+            "status_url": f"{base}/docs/reliability.md",
+        })
 
     def read_doc(self, request: Request, document: str) -> Response:
         docs_root = Path(__file__).resolve().parents[1] / "docs"
@@ -257,7 +291,7 @@ X-API-Key: <key>
 # Step 3 — consumer polls for messages
 GET {base}/v1/channels/<channel_id>/messages?since=0
 X-API-Key: <key>
-→ returns messages[], next_since cursor
+→ returns messages[], next_cursor cursor
 
 # Step 4 — consumer claims the message (exclusive ownership)
 POST {base}/v1/messages/<message_id>/claim
@@ -281,28 +315,37 @@ POST {base}/v1/channels/<channel_id>/messages
 {{"content": "analysis complete", "actor_label": "orchestrator"}}
 
 # All consumers poll independently — no claiming needed
-GET {base}/v1/channels/<channel_id>/messages?since=<last_next_since>
+GET {base}/v1/channels/<channel_id>/messages?since=<last_next_cursor>
 
 ---
+
+## Reliability
+Messages are durable from the moment the 201 is returned (SQLite WAL).
+Single-node deployment — no replication. 24h TTL is hard.
+Claim is atomic: WHERE claimed_by_actor_id IS NULL + rowcount check.
+See: {base}/docs/reliability.md
 
 ## Full API reference
 
 ### Channels
-POST   /v1/channels                          {{"name":"<str>","mode":"broadcast|claimable","access":"open|restricted"}}
-GET    /v1/channels/<id_or_alias>
-PATCH  /v1/channels/<id_or_alias>            patchable: name, mode, access, description, pinned_message
-POST   /v1/channels/<id>/aliases             {{"alias":"<str>"}}
-POST   /v1/channels/<id>/invitations         → returns invitation_id (24h expiry, grants restricted access)
-GET    /v1/channels/<id>/members             owner only
-POST   /v1/channels/<id>/members             {{"key_id":"<str>"}}  owner only
-DELETE /v1/channels/<id>/members/<key_id>    owner only
-GET    /v1/channels/<id>/events              owner only; ?since=<cursor>&limit=<1-100>
+POST /v1/channels                {{"name":"<str>","mode":"broadcast|claimable","access":"open|restricted"}}
+GET /v1/channels/<id_or_alias>
+PATCH /v1/channels/<id_or_alias>   patchable: name, mode, access, description, pinned_message
+POST /v1/channels/<id>/aliases   {{"alias":"<str>"}}
+POST /v1/channels/<id>/invitations → returns invitation_id (24h expiry, grants restricted access)
+GET /v1/channels/<id>/members    owner only
+POST /v1/channels/<id>/members   {{"key_id":"<str>"}}  owner only
+DELETE /v1/channels/<id>/members/<key_id>  owner only
+GET /v1/channels/<id>/events     owner only; ?since=<cursor>&limit=<1-100>
 
 ### Messages
-POST /v1/channels/<id>/messages   {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
-GET  /v1/channels/<id>/messages   ?since=<iso_or_0>&limit=<1-100> → returns messages[], next_since
-POST /v1/messages/<id>/claim      {{"actor":"<id_or_alias>"}}
-POST /v1/messages/<id>/ack        {{"actor":"<id_or_alias>"}}
+POST   /v1/channels/<id>/messages   {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
+GET    /v1/channels/<id>/messages   ?since=<iso_or_0>&limit=<1-100>&status=unclaimed|claimed&expiring_before=<iso>
+POST   /v1/messages/<id>/claim      {{"actor":"<id_or_alias>"}}
+POST   /v1/messages/<id>/release    {{"actor":"<id_or_alias>"}}  (un-claim; crash recovery)
+POST   /v1/messages/<id>/ack        {{"actor":"<id_or_alias>"}}
+DELETE /v1/messages/<id>            retract before claim (409 if already claimed)
+DELETE /v1/channels/<id>            owner only; cascades messages + members
 
 ### Actors
 POST /v1/actors                   {{"name":"<str>","description":"<str>"}}
@@ -317,6 +360,21 @@ POST /v1/keys/promote             {{"email":"<str>"}}  → promotes to managed T
 GET    /v1/channel-invitations/<id>   resolves token; grants restricted channel access on first call
 DELETE /v1/channel-invitations/<id>   revoke
 
+### Observability / account
+GET /v1/keys/me         → current key's tier, owner_id, plan
+GET /account/usage      → tier and rate limit info
+
+---
+
+## Crash recovery pattern
+If a consumer agent crashes after claiming a message, another agent cannot claim it
+until the original claimer releases it or the message TTL expires.
+Recovery path:
+  1. Watchdog polls: GET /v1/channels/<id>/messages?status=unclaimed&expiring_before=<+1h>
+  2. If empty (all claimed), check if the claiming agent is still alive
+  3. Original claimer calls: POST /v1/messages/<msg_id>/release {{"actor":"<claimer>"}}
+  4. Another consumer can now claim it
+
 ---
 
 ## Error codes
@@ -330,6 +388,210 @@ DELETE /v1/channel-invitations/<id>   revoke
 429 rate_limit_exceeded   back off and retry after Retry-After seconds
 """
         return Response(status=200, body=guide.encode("utf-8"), content_type="text/plain; charset=utf-8")
+
+    def playground(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        auth_config = ""
+        if self.demo_key:
+            auth_config = (
+                f',"authentication":{{"preferredSecurityScheme":"ApiKeyAuth",'
+                f'"apiKey":{{"token":"{self.demo_key}"}}}}'
+            )
+        html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Backchannel API Playground</title>
+  </head>
+  <body>
+    <script
+      id="api-reference"
+      data-url="{base}/openapi.json"
+      data-configuration='{{
+        "theme": "purple",
+        "defaultHttpClient": {{"targetKey": "shell", "clientKey": "curl"}},
+        "hiddenClients": false,
+        "metaData": {{"title": "Backchannel API Playground"}}{auth_config}
+      }}'
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  </body>
+</html>"""
+        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
+
+    def compare(self, request: Request) -> Response:
+        html = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Backchannel vs. Alternatives</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.5rem; }
+      table { border-collapse: collapse; width: 100%; margin-top: 1.5rem; }
+      th, td { border: 1px solid #ddd; padding: 0.6rem 0.8rem; text-align: left; }
+      th { background: #f5f5f5; }
+      .win { color: #2a7a2a; font-weight: bold; }
+      .lose { color: #999; }
+      .partial { color: #888; }
+      p.note { color: #666; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Backchannel vs. Alternatives</h1>
+    <p>An honest feature matrix. Where a competitor wins, we say so.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Backchannel</th>
+          <th>Redis pub/sub</th>
+          <th>AWS SQS</th>
+          <th>Raw DB queue</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Zero setup for consumers</td>
+          <td class="win">✓ HTTP, no client lib</td>
+          <td class="lose">✗ Redis client needed</td>
+          <td class="lose">✗ AWS SDK needed</td>
+          <td class="partial">~ depends on DB</td>
+        </tr>
+        <tr>
+          <td>Atomic claim (first-wins)</td>
+          <td class="win">✓ exactly-once guarantee</td>
+          <td class="lose">✗ not supported</td>
+          <td class="partial">~ visibility timeout</td>
+          <td class="partial">~ with SELECT FOR UPDATE</td>
+        </tr>
+        <tr>
+          <td>Auto-expiry / TTL</td>
+          <td class="win">✓ 24h</td>
+          <td class="win">✓ configurable</td>
+          <td class="win">✓ up to 14 days</td>
+          <td class="lose">✗ manual cleanup</td>
+        </tr>
+        <tr>
+          <td>Agent-native discovery (OpenAPI, llms.txt)</td>
+          <td class="win">✓</td>
+          <td class="lose">✗</td>
+          <td class="lose">✗</td>
+          <td class="lose">✗</td>
+        </tr>
+        <tr>
+          <td>Instant free key (no sign-up)</td>
+          <td class="win">✓ POST /v1/keys</td>
+          <td class="lose">✗</td>
+          <td class="lose">✗ AWS account needed</td>
+          <td class="lose">✗</td>
+        </tr>
+        <tr>
+          <td>Horizontal scale</td>
+          <td class="lose">✗ single-node v1</td>
+          <td class="win">✓ clustered</td>
+          <td class="win">✓ managed</td>
+          <td class="lose">✗</td>
+        </tr>
+        <tr>
+          <td>Persistent storage (&gt;24h)</td>
+          <td class="lose">✗ 24h TTL is hard</td>
+          <td class="lose">✗ volatile by default</td>
+          <td class="partial">~ up to 14 days</td>
+          <td class="win">✓</td>
+        </tr>
+        <tr>
+          <td>Approximate cost at 1M req/day</td>
+          <td>€9.99/mo (Tier 1)</td>
+          <td>~€30/mo hosted</td>
+          <td>~€0.40/mo</td>
+          <td>infra cost only</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="note">Backchannel is optimised for agent coordination workloads: ephemeral handoffs between agents, broadcast fan-out, and temporary shared state. If you need persistent queues, durable storage, or high-throughput horizontal scale, use SQS or a purpose-built queue. Backchannel wins on simplicity, agent-native discovery, and exact-once claim semantics over HTTP.</p>
+    <p><a href="/agent-guide">Agent Guide</a> &middot; <a href="/openapi.json">OpenAPI</a> &middot; <a href="/docs/playground">Playground</a></p>
+  </body>
+</html>"""
+        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
+
+    def robots_txt(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        content = f"""User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+# Structured discovery for AI crawlers
+# OpenAPI spec: {base}/openapi.json
+# Agent guide: {base}/agent-guide
+# AI manifest: {base}/.well-known/ai-manifest.json
+# LLMs.txt: {base}/llms.txt
+"""
+        return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
+
+    def ai_plugin(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        payload = {
+            "schema_version": "v1",
+            "name_for_human": "Backchannel",
+            "name_for_model": "backchannel",
+            "description_for_human": "Ephemeral message bus for AI agent coordination. Claimable tasks, broadcast channels, 24h TTL.",
+            "description_for_model": (
+                "Backchannel is an ephemeral message bus for agent coordination. "
+                "Use it for multi-agent task handoffs (claimable channels — one consumer wins) "
+                "or fan-out broadcasts (all consumers read). Messages expire after 24h. "
+                "No persistent storage. Instant free key via POST /v1/keys."
+            ),
+            "auth": {
+                "type": "user_http",
+                "authorization_type": "bearer",
+            },
+            "api": {
+                "type": "openapi",
+                "url": f"{base}/openapi.json",
+                "is_user_authenticated": True,
+            },
+            "logo_url": f"{base}/favicon.ico",
+            "contact_email": "hello@oakstack.eu",
+            "legal_info_url": f"{base}/docs/protocol.md",
+        }
+        return self.json_response(200, payload)
+
+    def agent_policy(self, request: Request) -> Response:
+        payload = {
+            "rate_limits": [
+                {"tier": 0, "requests_per_window": 300, "window_seconds": 60, "name": "Test"},
+                {"tier": 1, "requests_per_window": 300, "window_seconds": 60, "name": "Free"},
+                {"tier": 2, "requests_per_window": 1000, "window_seconds": 60, "name": "Pro"},
+            ],
+            "retry_guidance": {
+                "on_429": "back_off_and_retry",
+                "retry_after_header": True,
+                "idempotency_key_supported": True,
+            },
+            "message_ttl_hours": 24,
+            "max_content_bytes": 65536,
+            "claim_guarantee": "exactly_once",
+        }
+        return self.json_response(200, payload)
 
     def well_known(self, request: Request) -> Response:
         return Response(
@@ -410,7 +672,7 @@ Work through this sequence to confirm Backchannel is working:
 
 3. List messages to confirm delivery:
    GET {base}/v1/channels/<channel_id>/messages?since=0
-   Expect: messages array with your message; note next_since for future polls.
+   Expect: messages array with your message; note next_cursor for future polls.
 
 4. Claim the message (exactly one agent wins):
    POST {base}/v1/messages/<message_id>/claim
@@ -446,7 +708,7 @@ Report the channel id, message id, claim status, and ack status.
 POST {base}/v1/keys              {{"agent_label":"my-agent"}}  → instant free key
 POST {base}/v1/channels          {{"name":"work-queue","mode":"claimable"}}
 POST {base}/v1/channels/<id>/messages  {{"content":"task payload","actor_label":"sender"}}
-GET  {base}/v1/channels/<id>/messages?since=0  → messages[], next_since
+GET  {base}/v1/channels/<id>/messages?since=0  → messages[], next_cursor
 POST {base}/v1/messages/<id>/claim     {{"actor":"worker"}}  → exclusive ownership
 
 ## Authentication
@@ -456,7 +718,7 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
 
 ## Key concepts
 - Channels: broadcast (fan-out) or claimable (one owner per message)
-- Messages: 24h TTL, read with since-cursor (pass next_since from previous response)
+- Messages: 24h TTL, read with since-cursor (pass next_cursor from previous response)
 - Claim: atomic — exactly one caller wins, 409 if already taken
 - Idempotency: pass Idempotency-Key header to safely retry writes
 - Invitations: shareable 24h tokens that grant restricted channel access
@@ -508,18 +770,25 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
 
     def create_message(self, request: Request, identifier: str) -> Response:
         envelope = self.store.create_message(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
-        return self.json_response(201, {"message": envelope.message, "next_since": envelope.cursor})
+        return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
     def list_messages(self, request: Request, identifier: str) -> Response:
-        since = request.query_value("since")
+        # cursor is the stable alias; since is deprecated but still accepted
+        since = request.query_value("cursor") or request.query_value("since")
         limit = request.query_value("limit")
         parsed_limit = None if limit is None else int(limit)
-        payload = self.store.list_messages(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id, team_id=request.auth.team_id)
-        return self.json_response(200, payload)
+        status = request.query_value("status")
+        expiring_before = request.query_value("expiring_before")
+        payload = self.store.list_messages(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id, team_id=request.auth.team_id, status=status, expiring_before=expiring_before)
+        response = self.json_response(200, payload)
+        if request.query_value("since") and not request.query_value("cursor"):
+            response.extra_headers.append(("Deprecation", "true"))
+            response.extra_headers.append(("Sunset", "2027-01-01"))
+        return response
 
     def list_channel_members(self, request: Request, identifier: str) -> Response:
         members = self.store.list_channel_members(identifier, key_id=request.auth.key_id, team_id=request.auth.team_id)
-        return self.json_response(200, {"items": members})
+        return self.json_response(200, {"data": members})
 
     def add_channel_member(self, request: Request, identifier: str) -> Response:
         member = self.store.add_channel_member(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
@@ -543,6 +812,18 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
     def claim_message(self, request: Request, message_id: str) -> Response:
         payload = self.store.claim_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(200, payload)
+
+    def release_message(self, request: Request, message_id: str) -> Response:
+        payload = self.store.release_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        return self.json_response(200, payload)
+
+    def delete_message(self, request: Request, message_id: str) -> Response:
+        self.store.delete_message(message_id, key_id=request.auth.key_id, team_id=request.auth.team_id)
+        return self.json_response(200, {"status": "retracted"})
+
+    def delete_channel(self, request: Request, identifier: str) -> Response:
+        self.store.delete_channel(identifier, key_id=request.auth.key_id, team_id=request.auth.team_id)
+        return Response(status=204, body=b"", content_type="application/json")
 
     def get_channel_invitation(self, request: Request, invitation_id: str) -> Response:
         self.invitation_rate_limiter.check(request.remote_addr)
@@ -636,7 +917,7 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
             key_id=request.auth.key_id,
             team_id=request.auth.team_id,
         )
-        return self.json_response(201, {"message": envelope.message, "next_since": envelope.cursor})
+        return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
     def task_claim_and_ack(self, request: Request) -> Response:
         body = request.json()
@@ -717,7 +998,7 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
 
     def list_sessions(self, request: Request) -> Response:
         sessions = self.store.list_sessions(key_id=request.auth.key_id)
-        return self.json_response(200, {"items": sessions})
+        return self.json_response(200, {"data": sessions})
 
     def create_session(self, request: Request) -> Response:
         body = request.json()
@@ -739,6 +1020,30 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
     def observability_metrics(self, request: Request) -> Response:
         metrics = self.store.get_observability_metrics(request.auth.key_id)
         return self.json_response(200, metrics)
+
+    def keys_me(self, request: Request) -> Response:
+        auth = request.auth
+        return self.json_response(200, {
+            "key_id": auth.key_id,
+            "owner_id": auth.owner_id,
+            "tier": auth.tier,
+            "plan": auth.plan,
+            "active": auth.active,
+        })
+
+    def account_usage(self, request: Request) -> Response:
+        auth = request.auth
+        rate_limits_by_tier = {0: 300, 1: 300, 2: 1000}
+        limit = rate_limits_by_tier.get(auth.tier or 0, 300)
+        return self.json_response(200, {
+            "tier": auth.tier,
+            "plan": auth.plan,
+            "rate_limit": {
+                "requests_per_window": limit,
+                "window_seconds": 60,
+            },
+            "note": "Per-request usage counters are not tracked in v1. Use X-RateLimit-Limit and X-RateLimit-Window headers to gauge headroom.",
+        })
 
     def json_response(self, status: int, payload: dict[str, Any]) -> Response:
         return Response(status=status, body=json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"))

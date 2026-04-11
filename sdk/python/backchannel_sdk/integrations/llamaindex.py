@@ -20,7 +20,7 @@ def get_tools(client: BackchannelClient) -> list[FunctionTool]:
         return json.dumps(client.send_message(channel_id, content, actor_label=actor_label))
 
     def list_messages(channel_id: str, since: str = "0") -> str:
-        """Poll a Backchannel channel for messages. Pass next_since as since on subsequent calls."""
+        """Poll a Backchannel channel for messages. Pass next_cursor as since on subsequent calls."""
         import json
         return json.dumps(client.list_messages(channel_id, since=since))
 

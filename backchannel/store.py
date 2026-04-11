@@ -348,9 +348,7 @@ class BackchannelStore:
         related_channels = payload.get("related_channels", [])
         webhook_url = self._optional_string(payload.get("webhook_url"), allow_none=True)
         webhook_secret = self._optional_string(payload.get("webhook_secret"), allow_none=True)
-        # team_id from payload overrides the one passed by the caller (auth context)
-        payload_team_id = self._optional_string(payload.get("team_id"), allow_none=True)
-        effective_team_id = payload_team_id if payload_team_id is not None else team_id
+        effective_team_id = team_id
         channel_id = str(uuid.uuid4())
         now = to_timestamp(self.now())
 
@@ -469,8 +467,18 @@ class BackchannelStore:
             conn.commit()
             return self._serialize_actor(conn, self._get_actor_by_id(conn, actor["id"]))
 
+    _MAX_CONTENT_BYTES = 65536  # 64 KB
+
     def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> MessageEnvelope:
         content = self._required_string(payload, "content")
+        content_bytes = content.encode("utf-8")
+        if len(content_bytes) > self._MAX_CONTENT_BYTES:
+            raise APIError(
+                422,
+                "content_too_large",
+                f"Message content exceeds the {self._MAX_CONTENT_BYTES // 1024}KB limit",
+                {"max_content_bytes": self._MAX_CONTENT_BYTES, "received_bytes": len(content_bytes)},
+            )
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
         actor_identifier = payload.get("actor")
         actor_label = self._optional_string(payload.get("actor_label"), allow_none=True)
@@ -481,6 +489,17 @@ class BackchannelStore:
 
         with self.connect() as conn:
             channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            # Validate metadata against channel's metadata_schema (required fields only)
+            channel_schema = json.loads(channel["metadata_schema"]) if isinstance(channel["metadata_schema"], str) else channel["metadata_schema"]
+            if channel_schema:
+                required_fields = channel_schema.get("required", [])
+                violations = [
+                    {"field": f"metadata.{field}", "issue": "required field missing"}
+                    for field in required_fields
+                    if field not in metadata
+                ]
+                if violations:
+                    raise APIError(422, "metadata_validation_failed", "Message metadata failed channel schema validation", {"violations": violations})
             actor = None
             if actor_identifier is not None:
                 actor = self._resolve_actor(conn, self._optional_string(actor_identifier))
@@ -505,19 +524,28 @@ class BackchannelStore:
             message = self._get_message(conn, message_id)
             return MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
 
-    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None) -> dict[str, Any]:
+    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
         if page_size < 1 or page_size > 100:
             raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
+        if status is not None and status not in {"unclaimed", "claimed"}:
+            raise APIError(422, "invalid_status", "status must be 'unclaimed' or 'claimed'")
 
         with self.connect() as conn:
             channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
             now = to_timestamp(self.now())
             params: list[Any] = [channel["id"], now]
-            since_clause = ""
+            extra_clauses = ""
             if since:
-                since_clause = "AND created_at > ?"
+                extra_clauses += " AND created_at > ?"
                 params.append(to_timestamp(parse_timestamp(since)))
+            if status == "unclaimed":
+                extra_clauses += " AND claimed_by_actor_id IS NULL"
+            elif status == "claimed":
+                extra_clauses += " AND claimed_by_actor_id IS NOT NULL"
+            if expiring_before:
+                extra_clauses += " AND expires_at < ?"
+                params.append(to_timestamp(parse_timestamp(expiring_before)))
             params.append(page_size)
             rows = conn.execute(
                 f"""
@@ -525,7 +553,7 @@ class BackchannelStore:
                 FROM messages
                 WHERE channel_id = ?
                   AND expires_at > ?
-                  {since_clause}
+                  {extra_clauses}
                 ORDER BY created_at ASC
                 LIMIT ?
                 """,
@@ -533,11 +561,11 @@ class BackchannelStore:
             ).fetchall()
 
             items = [self._serialize_message(conn, row) for row in rows]
-            next_since = items[-1]["created_at"] if items else since
+            next_cursor = items[-1]["created_at"] if items else since
             return {
-                "items": items,
+                "data": items,
                 "limit": page_size,
-                "next_since": next_since,
+                "next_cursor": next_cursor,
             }
 
     def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
@@ -629,6 +657,100 @@ class BackchannelStore:
             conn.commit()
             refreshed = self._get_message(conn, message_id)
             return {"status": "claimed", "message": self._serialize_message(conn, refreshed)}
+
+    def release_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
+        actor_identifier = self._required_string(payload, "actor")
+        with self.connect() as conn:
+            message = self._get_message(conn, message_id)
+            if parse_timestamp(message["expires_at"]) <= self.now():
+                raise APIError(410, "message_expired", "Expired messages cannot be released")
+            channel = self._get_channel_by_id(conn, message["channel_id"])
+            if channel["mode"] != "claimable":
+                raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be released")
+            self._check_channel_access(conn, channel, key_id, team_id=team_id)
+            if not message["claimed_by_actor_id"]:
+                raise APIError(409, "not_claimed", "This message is not claimed and cannot be released")
+            actor = self._resolve_actor(conn, actor_identifier)
+            if message["claimed_by_actor_id"] != actor["id"]:
+                raise APIError(403, "forbidden", "Only the claiming actor can release this message")
+            conn.execute(
+                "UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL WHERE id = ?",
+                (message_id,),
+            )
+            conn.commit()
+            refreshed = self._get_message(conn, message_id)
+            return {"status": "released", "message": self._serialize_message(conn, refreshed)}
+
+    def delete_message(self, message_id: str, key_id: str, team_id: str | None = None) -> None:
+        with self.connect() as conn:
+            message = self._get_message(conn, message_id)
+            channel = self._get_channel_by_id(conn, message["channel_id"])
+            self._check_channel_access(conn, channel, key_id, team_id=team_id)
+            if message["claimed_by_actor_id"]:
+                raise APIError(409, "message_claimed", "Cannot retract a message that has already been claimed")
+            # Archive before deleting (item5 pattern) — use a standalone audit run
+            run_id = str(uuid.uuid4())
+            started_at = to_timestamp(self.now())
+            conn.execute(
+                """
+                INSERT INTO audit_cleanup_runs (id, started_at, finished_at, status, archived_messages, purged_messages, archived_invitations, purged_invitations, failure_message)
+                VALUES (?, ?, NULL, 'running', 0, 0, 0, 0, NULL)
+                """,
+                (run_id, started_at),
+            )
+            audit_message_id = str(uuid.uuid4())
+            actor_name = self._actor_name(conn, message["actor_id"])
+            claimed_by_actor_name = self._actor_name(conn, message["claimed_by_actor_id"])
+            channel_snapshot = json.dumps(dict(channel), sort_keys=True)
+            archived_at = to_timestamp(self.now())
+            conn.execute(
+                """
+                INSERT INTO audit_messages (
+                    id, run_id, live_message_id, live_channel_id, owner_id, actor_id, actor_name, actor_label, content, metadata, created_at, expires_at,
+                    claimed_by_actor_id, claimed_by_actor_name, claimed_at, channel_snapshot_json, archived_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_message_id,
+                    run_id,
+                    message["id"],
+                    message["channel_id"],
+                    channel["owner_id"],
+                    message["actor_id"],
+                    actor_name,
+                    message["actor_label"],
+                    message["content"],
+                    message["metadata"],
+                    message["created_at"],
+                    message["expires_at"],
+                    message["claimed_by_actor_id"],
+                    claimed_by_actor_name,
+                    message["claimed_at"],
+                    channel_snapshot,
+                    archived_at,
+                ),
+            )
+            conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+            finished_at = to_timestamp(self.now())
+            conn.execute(
+                """
+                UPDATE audit_cleanup_runs
+                SET finished_at = ?, status = 'completed', archived_messages = 1, purged_messages = 1
+                WHERE id = ?
+                """,
+                (finished_at, run_id),
+            )
+            conn.commit()
+
+    def delete_channel(self, channel_identifier: str, key_id: str, team_id: str | None = None) -> None:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can delete a channel")
+            # ON DELETE CASCADE handles messages, members, invitations, events
+            conn.execute("DELETE FROM channels WHERE id = ?", (channel["id"],))
+            conn.commit()
 
     def create_channel_invitation(self, channel_identifier: str, owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         with self.connect() as conn:
@@ -743,8 +865,8 @@ class BackchannelStore:
                 params,
             ).fetchall()
             items = [self._serialize_event(row) for row in rows]
-            next_since = items[-1]["created_at"] if items else since
-            return {"items": items, "limit": page_size, "next_since": next_since}
+            next_cursor = items[-1]["created_at"] if items else since
+            return {"data": items, "limit": page_size, "next_cursor": next_cursor}
 
     def cleanup_expired_messages(self) -> int:
         summary = self.archive_and_cleanup_expired_records()
@@ -1216,7 +1338,6 @@ class BackchannelStore:
                 (row["id"],),
             ).fetchall()
         ]
-        team_id = row["team_id"] if "team_id" in row.keys() else None
         return {
             "id": row["id"],
             "owner_id": row["owner_id"],
@@ -1224,7 +1345,6 @@ class BackchannelStore:
             "name": row["name"],
             "mode": row["mode"],
             "access": row["access"],
-            "team_id": team_id,
             "description": row["description"],
             "metadata_schema": json.loads(row["metadata_schema"]),
             "pinned_message": row["pinned_message"],

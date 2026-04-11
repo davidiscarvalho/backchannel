@@ -163,28 +163,28 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertEqual(status, 201)
         message = created["message"]
         self.assertEqual(message["actor"]["name"], "observer-1")
-        self.assertEqual(created["next_since"], message["created_at"])
+        self.assertEqual(created["next_cursor"], message["created_at"])
 
         status, listed = self.request("GET", "/v1/channels/ops.alerts/messages?limit=10")
         self.assertEqual(status, 200)
-        self.assertEqual(len(listed["items"]), 1)
-        self.assertEqual(listed["items"][0]["id"], message["id"])
-        self.assertEqual(listed["next_since"], message["created_at"])
+        self.assertEqual(len(listed["data"]), 1)
+        self.assertEqual(listed["data"][0]["id"], message["id"])
+        self.assertEqual(listed["next_cursor"], message["created_at"])
 
         status, empty_page = self.request(
             "GET",
             f"/v1/channels/ops.alerts/messages?{urlencode({'since': message['created_at'], 'limit': 10})}",
         )
         self.assertEqual(status, 200)
-        self.assertEqual(empty_page["items"], [])
+        self.assertEqual(empty_page["data"], [])
 
     def test_root_page_uses_matrix_inspired_html_and_docs_are_public(self) -> None:
         status, headers, body = self.request_raw("GET", "/")
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
-        self.assertIn("Quiet Transport For Loud Systems.", body)
-        self.assertIn("backchannel://live-wire", body)
-        self.assertIn("Get API Key", body)
+        self.assertIn("Backchannel", body)
+        self.assertIn("claimable", body)
+        self.assertIn("/v1/keys", body)
 
         status, headers, body = self.request_raw("GET", "/docs/protocol.md")
         self.assertEqual(status, 200)
@@ -357,7 +357,7 @@ class BackchannelProtocolTests(unittest.TestCase):
 
         status, listed = self.request("GET", f"/v1/channels/{channel['id']}/messages")
         self.assertEqual(status, 200)
-        self.assertEqual(listed["items"], [])
+        self.assertEqual(listed["data"], [])
 
         store = BackchannelStore(self.db_path, now_provider=self.clock.now)
         summary = store.archive_and_cleanup_expired_records()
@@ -441,7 +441,7 @@ class BackchannelProtocolTests(unittest.TestCase):
 
         status, listed = self.request("GET", f"/v1/channels/{channel['id']}/messages")
         self.assertEqual(status, 200)
-        self.assertEqual(listed["items"][0]["actor_label"], "external-hook-v2")
+        self.assertEqual(listed["data"][0]["actor_label"], "external-hook-v2")
 
     def test_list_messages_limit_validation(self) -> None:
         channel = self.create_channel("Limits", "broadcast")
@@ -541,9 +541,9 @@ class BackchannelProtocolTests(unittest.TestCase):
         # membership row references the invitation
         status, members = self.request("GET", f"/v1/channels/{channel_id}/members")
         self.assertEqual(status, 200)
-        member_keys = [m["key_id"] for m in members["items"]]
+        member_keys = [m["key_id"] for m in members["data"]]
         self.assertIn("key_owner_2", member_keys)
-        invitation_member = next(m for m in members["items"] if m["key_id"] == "key_owner_2")
+        invitation_member = next(m for m in members["data"] if m["key_id"] == "key_owner_2")
         self.assertEqual(invitation_member["granted_via_invitation_id"], invitation_id)
 
     def test_channel_member_management(self) -> None:
@@ -569,7 +569,7 @@ class BackchannelProtocolTests(unittest.TestCase):
         # owner-1 lists members
         status, listed = self.request("GET", f"/v1/channels/{channel_id}/members")
         self.assertEqual(status, 200)
-        member_keys = [m["key_id"] for m in listed["items"]]
+        member_keys = [m["key_id"] for m in listed["data"]]
         self.assertIn("key_owner_2", member_keys)
 
         # non-owner cannot list members
@@ -621,8 +621,13 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertIn("POST /v1/channels", body)
         self.assertIn("24 hours", body)
 
-        # /.well-known/backchannel.json — service metadata
-        status, _, body = self.request_raw("GET", "/.well-known/backchannel.json")
+        # /.well-known/backchannel.json — redirects to ai-manifest.json
+        status, headers, _ = self.request_raw("GET", "/.well-known/backchannel.json")
+        self.assertEqual(status, 302)
+        self.assertIn("ai-manifest.json", headers.get("Location", ""))
+
+        # /.well-known/ai-manifest.json — canonical manifest
+        status, _, body = self.request_raw("GET", "/.well-known/ai-manifest.json")
         self.assertEqual(status, 200)
         meta = json.loads(body)
         self.assertEqual(meta["name"], "Backchannel")
@@ -650,7 +655,7 @@ class BackchannelProtocolTests(unittest.TestCase):
         # Initially no events
         status, page = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
         self.assertEqual(status, 200)
-        self.assertEqual(page["items"], [])
+        self.assertEqual(page["data"], [])
 
         # Add a member explicitly — expect member_added event
         status, _ = self.request(
@@ -662,8 +667,8 @@ class BackchannelProtocolTests(unittest.TestCase):
 
         status, page = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
         self.assertEqual(status, 200)
-        self.assertEqual(len(page["items"]), 1)
-        evt = page["items"][0]
+        self.assertEqual(len(page["data"]), 1)
+        evt = page["data"][0]
         self.assertEqual(evt["event_type"], "member_added")
         self.assertEqual(evt["actor_key_id"], "key_owner_1")
         self.assertEqual(evt["subject_key_id"], "key_owner_2")
@@ -704,14 +709,14 @@ class BackchannelProtocolTests(unittest.TestCase):
         # All four event types should now be present
         status, page = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
         self.assertEqual(status, 200)
-        event_types = [e["event_type"] for e in page["items"]]
+        event_types = [e["event_type"] for e in page["data"]]
         self.assertIn("member_added", event_types)
         self.assertIn("member_removed", event_types)
         self.assertIn("invitation_resolved", event_types)
         self.assertIn("invitation_revoked", event_types)
 
         # invitation_resolved event should carry the invitation_id
-        resolved = next(e for e in page["items"] if e["event_type"] == "invitation_resolved")
+        resolved = next(e for e in page["data"] if e["event_type"] == "invitation_resolved")
         self.assertEqual(resolved["invitation_id"], inv_id)
         self.assertEqual(resolved["subject_key_id"], "key_owner_2")
 
@@ -720,14 +725,14 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertEqual(status, 403)
 
         # Events survive cleanup until they expire
-        event_count = len(page["items"])
+        event_count = len(page["data"])
         self.clock.advance(hours=1)
         self.app.store.archive_and_cleanup_expired_records()
         status, page2 = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
-        self.assertEqual(len(page2["items"]), event_count)  # not expired yet
+        self.assertEqual(len(page2["data"]), event_count)  # not expired yet
 
         # Advance past TTL — events purged
         self.clock.advance(hours=25)
         self.app.store.archive_and_cleanup_expired_records()
         status, page3 = self.request("GET", f"/v1/channels/{channel_id}/events", api_key="test-key-owner-1")
-        self.assertEqual(page3["items"], [])
+        self.assertEqual(page3["data"], [])

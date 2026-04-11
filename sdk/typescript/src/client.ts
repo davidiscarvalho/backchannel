@@ -226,8 +226,8 @@ export class BackchannelClient {
     let cursor = since;
     for (let i = 0; i < maxPolls; i++) {
       const result = await this.listMessages(channelId, { since: cursor });
-      if (result.items.length > 0) return result.items[0];
-      cursor = result.next_since ?? cursor;
+      if (result.data.length > 0) return result.data[0];
+      cursor = result.next_cursor ?? cursor;
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
     return null;
