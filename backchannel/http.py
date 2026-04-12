@@ -146,6 +146,7 @@ class BackchannelApp:
             ("DELETE", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.delete_session),
             ("GET", re.compile(r"^/v1/observability/metrics$"), True, self.observability_metrics),
             ("GET", re.compile(r"^/v1/keys/me$"), True, self.keys_me),
+            ("PUT", re.compile(r"^/v1/keys/me/scopes$"), True, self.set_key_scopes),
             ("GET", re.compile(r"^/account/usage$"), True, self.account_usage),
             ("GET", re.compile(r"^/status$"), False, self.status),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/metrics$"), True, self.channel_metrics),
@@ -219,6 +220,7 @@ class BackchannelApp:
             if match:
                 if requires_auth:
                     request.auth = self.authenticator.authenticate(request.headers)
+                    request.auth.scopes = self.store.get_key_scopes(request.auth.key_id)
                     rate_limits_by_tier = {0: 300, 1: 300, 2: 1000}
                     tier_limit = rate_limits_by_tier.get(request.auth.tier or 0, 300)
                     remaining = self.api_rate_tracker.track(request.auth.key_id, limit=tier_limit)
@@ -760,6 +762,7 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def create_channel(self, request: Request) -> Response:
+        self._require_scope(request.auth, "channels:write")
         channel = self.store.create_channel(request.json(), owner_id=request.auth.owner_id, key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(201, channel)
 
@@ -797,10 +800,12 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
         return self.json_response(201, invitation)
 
     def create_message(self, request: Request, identifier: str) -> Response:
+        self._require_scope(request.auth, "messages:write")
         envelope = self.store.create_message(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
     def list_messages(self, request: Request, identifier: str) -> Response:
+        self._require_scope(request.auth, "messages:read")
         # cursor is the stable alias; since is deprecated but still accepted
         since = request.query_value("cursor") or request.query_value("since")
         limit = request.query_value("limit")
@@ -838,6 +843,7 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
         return self.json_response(200, payload)
 
     def claim_message(self, request: Request, message_id: str) -> Response:
+        self._require_scope(request.auth, "messages:claim")
         payload = self.store.claim_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(200, payload)
 
@@ -1065,7 +1071,17 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
             "tier": auth.tier,
             "plan": auth.plan,
             "active": auth.active,
+            "scopes": auth.scopes,
         })
+
+    def set_key_scopes(self, request: Request) -> Response:
+        auth = request.auth
+        payload = request.json()
+        scopes = payload.get("scopes")
+        if not isinstance(scopes, list):
+            raise APIError(422, "invalid_scopes", "scopes must be an array of scope strings")
+        self.store.set_key_scopes(auth.key_id, scopes)
+        return self.json_response(200, {"key_id": auth.key_id, "scopes": sorted(scopes)})
 
     def account_usage(self, request: Request) -> Response:
         auth = request.auth
@@ -1080,6 +1096,18 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
             },
             "note": "Per-request usage counters are not tracked in v1. Use X-RateLimit-Limit and X-RateLimit-Window headers to gauge headroom.",
         })
+
+    def _require_scope(self, auth: Any, required_scope: str) -> None:
+        """Raise 403 if the key has explicit scopes and the required scope is absent."""
+        if auth.scopes is None:
+            return  # unrestricted key
+        if required_scope not in auth.scopes:
+            raise APIError(
+                403,
+                "insufficient_scope",
+                f"This operation requires scope '{required_scope}'",
+                {"required_scope": required_scope, "granted_scopes": auth.scopes},
+            )
 
     def status(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"

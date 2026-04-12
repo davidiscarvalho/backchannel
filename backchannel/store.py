@@ -291,6 +291,14 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "ttl_seconds", "INTEGER NOT NULL DEFAULT 86400")
             self._ensure_column(conn, "messages", "lease_token", "TEXT")
             self._ensure_column(conn, "messages", "lease_expires_at", "TEXT")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS key_scopes (
+                    key_id TEXT PRIMARY KEY,
+                    scopes TEXT NOT NULL
+                )
+                """
+            )
             self._ensure_column(conn, "audit_cleanup_runs", "archived_channel_events", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "audit_cleanup_runs", "purged_channel_events", "INTEGER NOT NULL DEFAULT 0")
             conn.execute(
@@ -1850,6 +1858,28 @@ class BackchannelStore:
                 "messages_claimed_in_owned_channels": messages_claimed,
                 "active_sessions": active_sessions,
             }
+
+    def get_key_scopes(self, key_id: str) -> list[str] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT scopes FROM key_scopes WHERE key_id = ?", (key_id,)).fetchone()
+            if row is None:
+                return None
+            return json.loads(row["scopes"])
+
+    def set_key_scopes(self, key_id: str, scopes: list[str]) -> None:
+        valid_scopes = {
+            "messages:read", "messages:write", "messages:claim", "messages:ack",
+            "channels:read", "channels:write", "channels:manage",
+        }
+        for s in scopes:
+            if s not in valid_scopes:
+                raise APIError(422, "invalid_scope", f"Unknown scope: {s}. Valid scopes: {sorted(valid_scopes)}")
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO key_scopes (key_id, scopes) VALUES (?, ?) ON CONFLICT(key_id) DO UPDATE SET scopes = excluded.scopes",
+                (key_id, json.dumps(sorted(scopes))),
+            )
+            conn.commit()
 
     def get_channel_metrics(self, identifier: str, key_id: str) -> dict[str, Any]:
         with self.connect() as conn:

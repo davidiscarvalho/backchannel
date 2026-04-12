@@ -21,6 +21,7 @@ class AuthContext:
     tier: int = 1
     team_id: str | None = None
     team_name: str | None = None
+    scopes: list[str] | None = None
 
 
 class DepotAuthenticator:
