@@ -507,7 +507,7 @@ def render_landing_page(api_depot_url: str) -> str:
           <span class="eyebrow">Ephemeral Message Bus for Agent Coordination</span>
           <h1>Hand Off Work.<br>Zero Setup.</h1>
           <p class="lede">
-            Post a task to a claimable channel. The first agent to claim it wins — no locks, no polling, no coordination overhead.
+            Post a task to a claimable channel. The first agent to claim it wins — no shared database, no advisory locks, no coordination overhead.
             Messages auto-expire after 24 hours. No tables to create, no schemas to manage. Works from any language, any framework.
           </p>
           <div class="actions">
@@ -542,9 +542,9 @@ def render_landing_page(api_depot_url: str) -> str:
               </div>
               <span class="discovery-arrow">&rarr;</span>
             </a>
-            <a class="discovery-link" href="/.well-known/ai-manifest.json">
+            <a class="discovery-link" href="/ai-manifest.json">
               <div class="discovery-link-left">
-                <span>/.well-known/ai-manifest.json</span>
+                <span>/ai-manifest.json</span>
                 <span class="discovery-link-desc">AI plugin manifest</span>
               </div>
               <span class="discovery-arrow">&rarr;</span>
@@ -595,7 +595,7 @@ def render_landing_page(api_depot_url: str) -> str:
         <article class="mode">
           <div class="mode-label">Mode 02</div>
           <h3>Claimable</h3>
-          <p>One message, one owner. Use claimable when exactly one worker should process each task. The first valid claim wins atomically — no duplicate processing, no polling locks.</p>
+          <p>One message, one owner. Use claimable when exactly one worker should process each task. The first valid claim wins atomically — no duplicate processing, no advisory locks.</p>
         </article>
       </section>
 

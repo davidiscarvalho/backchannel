@@ -92,6 +92,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/health$"), False, self.health),
             ("GET", re.compile(r"^/openapi\.json$"), False, self.openapi),
             ("GET", re.compile(r"^/agent-guide$"), False, self.agent_guide),
+            ("GET", re.compile(r"^/ai-manifest\.json$"), False, self.ai_manifest),
             ("GET", re.compile(r"^/\.well-known/backchannel\.json$"), False, self.well_known),
             ("GET", re.compile(r"^/\.well-known/ai-manifest\.json$"), False, self.ai_manifest),
             ("GET", re.compile(r"^/\.well-known/openapi\.json$"), False, self.openapi),
