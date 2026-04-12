@@ -30,6 +30,17 @@ def parse_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def parse_timestamp_or_none(value: str | None) -> datetime | None:
+    """Parse a timestamp string, returning None for missing/invalid/sentinel values.
+    Treats '0', '', and unparseable strings as 'from the beginning' (no filter)."""
+    if not value or value.strip() == "0":
+        return None
+    try:
+        return parse_timestamp(value)
+    except (ValueError, TypeError):
+        return None
+
+
 class APIError(Exception):
     def __init__(self, status: int, error: str, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
@@ -536,16 +547,19 @@ class BackchannelStore:
             now = to_timestamp(self.now())
             params: list[Any] = [channel["id"], now]
             extra_clauses = ""
-            if since:
+            since_dt = parse_timestamp_or_none(since)
+            if since_dt is not None:
                 extra_clauses += " AND created_at > ?"
-                params.append(to_timestamp(parse_timestamp(since)))
+                params.append(to_timestamp(since_dt))
             if status == "unclaimed":
                 extra_clauses += " AND claimed_by_actor_id IS NULL"
             elif status == "claimed":
                 extra_clauses += " AND claimed_by_actor_id IS NOT NULL"
             if expiring_before:
-                extra_clauses += " AND expires_at < ?"
-                params.append(to_timestamp(parse_timestamp(expiring_before)))
+                expiring_dt = parse_timestamp_or_none(expiring_before)
+                if expiring_dt is not None:
+                    extra_clauses += " AND expires_at < ?"
+                    params.append(to_timestamp(expiring_dt))
             params.append(page_size)
             rows = conn.execute(
                 f"""
@@ -849,9 +863,10 @@ class BackchannelStore:
             now = to_timestamp(self.now())
             params: list[Any] = [channel["id"], now]
             since_clause = ""
-            if since:
+            since_dt = parse_timestamp_or_none(since)
+            if since_dt is not None:
                 since_clause = "AND created_at > ?"
-                params.append(to_timestamp(parse_timestamp(since)))
+                params.append(to_timestamp(since_dt))
             params.append(page_size)
             rows = conn.execute(
                 f"""
