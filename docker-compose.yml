@@ -10,6 +10,9 @@ services:
       BACKCHANNEL_DEPOT_INTROSPECTION_URL: ${BACKCHANNEL_DEPOT_INTROSPECTION_URL:-}
       BACKCHANNEL_DEPOT_SERVICE_TOKEN: ${BACKCHANNEL_DEPOT_SERVICE_TOKEN:-}
       BACKCHANNEL_DEPOT_BACKCHANNEL_URL: ${BACKCHANNEL_DEPOT_BACKCHANNEL_URL:-https://the-api-depot.example/backchannel}
+      BACKCHANNEL_DEPOT_INTERNAL_BASE_URL: ${BACKCHANNEL_DEPOT_INTERNAL_BASE_URL:-}
+      BACKCHANNEL_BASE_URL: ${BACKCHANNEL_BASE_URL:-}
+      BACKCHANNEL_DEMO_KEY: ${BACKCHANNEL_DEMO_KEY:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
