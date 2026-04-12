@@ -33,7 +33,7 @@ All messages have a hard 24-hour TTL from creation time.
 
 | Tier | Requests/min | Notes |
 |---|---|---|
-| Tier 0 (Test) | 30 | 48h key, one per agent_label |
+| Tier 0 (Test) | 300 | 48h key, one per agent_label |
 | Tier 1 (Free) | 300 | Permanent key |
 | Tier 2 (Pro) | 1 200 | High-volume, team quotas |
 

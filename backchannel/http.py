@@ -139,6 +139,8 @@ class BackchannelApp:
             ("GET", re.compile(r"^/v1/observability/metrics$"), True, self.observability_metrics),
             ("GET", re.compile(r"^/v1/keys/me$"), True, self.keys_me),
             ("GET", re.compile(r"^/account/usage$"), True, self.account_usage),
+            ("GET", re.compile(r"^/status$"), False, self.status),
+            ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/metrics$"), True, self.channel_metrics),
         ]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
@@ -160,10 +162,20 @@ class BackchannelApp:
             }
             response = self.json_response(500, payload)
 
+        # W3C traceparent: echo incoming or generate from request_id
+        incoming_traceparent = environ.get("HTTP_TRACEPARENT", "")
+        if incoming_traceparent:
+            traceparent = incoming_traceparent
+        else:
+            trace_id = request_id.replace("-", "")
+            span_id = trace_id[:16]
+            traceparent = f"00-{trace_id}-{span_id}-01"
+
         headers = [
             ("Content-Type", response.content_type),
             ("Content-Length", str(len(response.body))),
             ("X-Request-Id", request_id),
+            ("traceparent", traceparent),
             ("X-RateLimit-Limit", "300"),
             ("X-RateLimit-Window", "60"),
         ]
@@ -1045,6 +1057,25 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
             },
             "note": "Per-request usage counters are not tracked in v1. Use X-RateLimit-Limit and X-RateLimit-Window headers to gauge headroom.",
         })
+
+    def status(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        return self.json_response(200, {
+            "status": "operational",
+            "updated_at": self.store.now().isoformat(),
+            "tier_sla": {
+                "tier_0": "best-effort",
+                "tier_1": "99% monthly uptime",
+                "tier_2": "99.9% monthly uptime",
+            },
+            "sla_url": f"{base}/docs/sla.md",
+            "health_url": f"{base}/health",
+        })
+
+    def channel_metrics(self, request: Request, identifier: str) -> Response:
+        auth = request.auth
+        metrics = self.store.get_channel_metrics(identifier, auth.key_id)
+        return self.json_response(200, metrics)
 
     def json_response(self, status: int, payload: dict[str, Any]) -> Response:
         return Response(status=status, body=json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"))

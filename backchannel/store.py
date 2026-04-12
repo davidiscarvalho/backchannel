@@ -1751,3 +1751,51 @@ class BackchannelStore:
                 "messages_claimed_in_owned_channels": messages_claimed,
                 "active_sessions": active_sessions,
             }
+
+    def get_channel_metrics(self, identifier: str, key_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, identifier, key_id=key_id)
+            channel_id = channel["id"]
+
+            counts = conn.execute(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN claimed_by_actor_id IS NULL THEN 1 ELSE 0 END) as unclaimed,
+                    SUM(CASE WHEN claimed_by_actor_id IS NOT NULL THEN 1 ELSE 0 END) as claimed
+                FROM messages WHERE channel_id = ?
+                """,
+                (channel_id,),
+            ).fetchone()
+
+            ack_count = conn.execute(
+                """
+                SELECT COUNT(DISTINCT message_id) as n
+                FROM message_events WHERE channel_id = ? AND event_type = 'ack'
+                """,
+                (channel_id,),
+            ).fetchone()["n"]
+
+            avg_row = conn.execute(
+                """
+                SELECT AVG(ack.occurred_at - claim.occurred_at) * 1000 as avg_ms
+                FROM message_events claim
+                JOIN message_events ack ON ack.message_id = claim.message_id
+                    AND ack.event_type = 'ack'
+                WHERE claim.channel_id = ? AND claim.event_type = 'claim'
+                """,
+                (channel_id,),
+            ).fetchone()
+
+            avg_ms = avg_row["avg_ms"]
+            return {
+                "channel_id": channel_id,
+                "message_counts": {
+                    "total": counts["total"] or 0,
+                    "unclaimed": counts["unclaimed"] or 0,
+                    "claimed": counts["claimed"] or 0,
+                    "acknowledged": ack_count,
+                },
+                "avg_claim_to_ack_ms": round(avg_ms) if avg_ms is not None else None,
+                "computed_at": self.now().isoformat(),
+            }
