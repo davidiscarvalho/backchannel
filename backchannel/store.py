@@ -500,15 +500,29 @@ class BackchannelStore:
 
         with self.connect() as conn:
             channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
-            # Validate metadata against channel's metadata_schema (required fields only)
+            # Validate metadata against channel's metadata_schema
             channel_schema = json.loads(channel["metadata_schema"]) if isinstance(channel["metadata_schema"], str) else channel["metadata_schema"]
             if channel_schema:
+                violations: list[dict[str, str]] = []
                 required_fields = channel_schema.get("required", [])
-                violations = [
-                    {"field": f"metadata.{field}", "issue": "required field missing"}
-                    for field in required_fields
-                    if field not in metadata
-                ]
+                for field in required_fields:
+                    if field not in metadata:
+                        violations.append({"field": f"metadata.{field}", "issue": "required field missing"})
+                properties = channel_schema.get("properties", {})
+                for field, field_schema in properties.items():
+                    if field not in metadata:
+                        continue
+                    value = metadata[field]
+                    expected_type = field_schema.get("type")
+                    if expected_type:
+                        type_map = {"string": str, "number": (int, float), "integer": int, "boolean": bool, "array": list, "object": dict}
+                        expected_py = type_map.get(expected_type)
+                        if expected_py and not isinstance(value, expected_py):
+                            violations.append({"field": f"metadata.{field}", "issue": f"expected type '{expected_type}'"})
+                            continue
+                    allowed_values = field_schema.get("enum")
+                    if allowed_values is not None and value not in allowed_values:
+                        violations.append({"field": f"metadata.{field}", "issue": f"value must be one of {allowed_values}"})
                 if violations:
                     raise APIError(422, "metadata_validation_failed", "Message metadata failed channel schema validation", {"violations": violations})
             actor = None
