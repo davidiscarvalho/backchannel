@@ -129,6 +129,8 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/ack$"), True, self.ack_message),
             ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/claim$"), True, self.claim_message),
             ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/release$"), True, self.release_message),
+            ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/claim-with-lease$"), True, self.claim_message_with_lease),
+            ("POST", re.compile(r"^/v1/leases/(?P<lease_token>[^/]+)/heartbeat$"), True, self.heartbeat_lease),
             ("DELETE", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)$"), True, self.delete_message),
             ("DELETE", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.delete_channel),
             ("POST", re.compile(r"^/v1/keys$"), False, self.issue_key),
@@ -841,6 +843,14 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
 
     def release_message(self, request: Request, message_id: str) -> Response:
         payload = self.store.release_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        return self.json_response(200, payload)
+
+    def claim_message_with_lease(self, request: Request, message_id: str) -> Response:
+        payload = self.store.claim_with_lease(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        return self.json_response(200, payload)
+
+    def heartbeat_lease(self, request: Request, lease_token: str) -> Response:
+        payload = self.store.heartbeat_lease(lease_token, request.json(), key_id=request.auth.key_id)
         return self.json_response(200, payload)
 
     def delete_message(self, request: Request, message_id: str) -> Response:

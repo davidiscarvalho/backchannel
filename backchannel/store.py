@@ -289,6 +289,8 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "webhook_secret", "TEXT")
             self._ensure_column(conn, "messages", "depends_on", "TEXT")
             self._ensure_column(conn, "channels", "ttl_seconds", "INTEGER NOT NULL DEFAULT 86400")
+            self._ensure_column(conn, "messages", "lease_token", "TEXT")
+            self._ensure_column(conn, "messages", "lease_expires_at", "TEXT")
             self._ensure_column(conn, "audit_cleanup_runs", "archived_channel_events", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "audit_cleanup_runs", "purged_channel_events", "INTEGER NOT NULL DEFAULT 0")
             conn.execute(
@@ -736,6 +738,71 @@ class BackchannelStore:
             conn.commit()
             refreshed = self._get_message(conn, message_id)
             return {"status": "released", "message": self._serialize_message(conn, refreshed)}
+
+    def claim_with_lease(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
+        actor_identifier = self._required_string(payload, "actor")
+        lease_seconds = payload.get("lease_seconds", 300)
+        if not isinstance(lease_seconds, int) or lease_seconds < 30 or lease_seconds > 3600:
+            raise APIError(422, "invalid_lease_seconds", "lease_seconds must be an integer between 30 and 3600")
+        metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
+
+        with self.connect() as conn:
+            message = self._get_message(conn, message_id)
+            if parse_timestamp(message["expires_at"]) <= self.now():
+                raise APIError(410, "message_expired", "Expired messages can no longer be claimed")
+            channel = self._get_channel_by_id(conn, message["channel_id"])
+            if channel["mode"] != "claimable":
+                raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
+            self._check_channel_access(conn, channel, key_id, team_id=team_id)
+            if message["claimed_by_actor_id"]:
+                raise APIError(409, "already_claimed", "This message has already been claimed")
+
+            actor = self._resolve_actor(conn, actor_identifier)
+            now = self.now()
+            claimed_at = to_timestamp(now)
+            lease_token = str(uuid.uuid4())
+            lease_expires_at = to_timestamp(now + timedelta(seconds=lease_seconds))
+
+            cursor = conn.execute(
+                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, lease_token = ?, lease_expires_at = ? WHERE id = ? AND claimed_by_actor_id IS NULL",
+                (actor["id"], claimed_at, lease_token, lease_expires_at, message_id),
+            )
+            if cursor.rowcount == 0:
+                raise APIError(409, "already_claimed", "This message has already been claimed")
+            conn.execute(
+                "INSERT INTO message_events (id, message_id, channel_id, actor_id, event_type, metadata, occurred_at) VALUES (?, ?, ?, ?, 'claim', ?, ?)",
+                (str(uuid.uuid4()), message_id, channel["id"], actor["id"], json.dumps(metadata, sort_keys=True), claimed_at),
+            )
+            conn.commit()
+            refreshed = self._get_message(conn, message_id)
+            return {
+                "lease_token": lease_token,
+                "expires_at": lease_expires_at,
+                "message": self._serialize_message(conn, refreshed),
+            }
+
+    def heartbeat_lease(self, lease_token: str, payload: dict[str, Any], key_id: str) -> dict[str, Any]:
+        lease_seconds = payload.get("lease_seconds", 300)
+        if not isinstance(lease_seconds, int) or lease_seconds < 30 or lease_seconds > 3600:
+            raise APIError(422, "invalid_lease_seconds", "lease_seconds must be an integer between 30 and 3600")
+
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM messages WHERE lease_token = ?", (lease_token,)
+            ).fetchone()
+            if row is None:
+                raise APIError(410, "lease_expired", "Lease not found or already expired")
+            now = self.now()
+            lease_expires_at_str = row["lease_expires_at"]
+            if lease_expires_at_str is None or parse_timestamp(lease_expires_at_str) <= now:
+                raise APIError(410, "lease_expired", "Lease has already expired")
+            new_expires_at = to_timestamp(now + timedelta(seconds=lease_seconds))
+            conn.execute(
+                "UPDATE messages SET lease_expires_at = ? WHERE lease_token = ?",
+                (new_expires_at, lease_token),
+            )
+            conn.commit()
+            return {"lease_token": lease_token, "expires_at": new_expires_at}
 
     def delete_message(self, message_id: str, key_id: str, team_id: str | None = None) -> None:
         with self.connect() as conn:
@@ -1197,6 +1264,15 @@ class BackchannelStore:
             )
             archived_channel_events += 1
 
+        # Release expired leases (revert to unclaimed)
+        conn.execute(
+            """
+            UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL, lease_token = NULL, lease_expires_at = NULL
+            WHERE lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
+              AND id NOT IN (SELECT message_id FROM message_events WHERE event_type = 'ack')
+            """,
+            (now,),
+        )
         purged_messages = conn.execute("DELETE FROM messages WHERE expires_at <= ?", (now,)).rowcount
         purged_invitations = conn.execute(
             "DELETE FROM channel_invitations WHERE expires_at <= ? OR revoked_at IS NOT NULL",
