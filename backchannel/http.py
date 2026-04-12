@@ -87,6 +87,12 @@ class BackchannelApp:
             window_seconds=3600,
             now_provider=self.store.now,
         )
+        # Non-enforcing tracker for X-RateLimit-Remaining header (keyed by key_id)
+        self.api_rate_tracker = SlidingWindowRateLimiter(
+            limit=300,
+            window_seconds=60,
+            now_provider=self.store.now,
+        )
         self.routes: list[tuple[str, re.Pattern[str], bool, RouteHandler]] = [
             ("GET", re.compile(r"^/$"), False, self.root),
             ("GET", re.compile(r"^/health$"), False, self.health),
@@ -211,6 +217,11 @@ class BackchannelApp:
             if match:
                 if requires_auth:
                     request.auth = self.authenticator.authenticate(request.headers)
+                    rate_limits_by_tier = {0: 300, 1: 300, 2: 1000}
+                    tier_limit = rate_limits_by_tier.get(request.auth.tier or 0, 300)
+                    remaining = self.api_rate_tracker.track(request.auth.key_id, limit=tier_limit)
+                    # Will be appended to response headers below
+                    request.rate_limit_remaining = remaining
                 # Idempotency-Key middleware for mutation requests
                 idempotency_key = request.headers.get("Idempotency-Key")
                 if idempotency_key and method in {"POST", "PATCH", "DELETE"} and request.auth:
@@ -224,6 +235,8 @@ class BackchannelApp:
                         )
                         return replay
                 response = handler(request, **match.groupdict())
+                if hasattr(request, "rate_limit_remaining"):
+                    response.extra_headers.append(("X-RateLimit-Remaining", str(request.rate_limit_remaining)))
                 if idempotency_key and method in {"POST", "PATCH", "DELETE"} and request.auth and response.status < 300:
                     cache_key = f"{request.auth.key_id}:{idempotency_key}"
                     self.store.cache_idempotent_response(cache_key, response.status, response.body.decode("utf-8"))

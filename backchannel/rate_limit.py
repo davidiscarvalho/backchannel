@@ -31,3 +31,17 @@ class SlidingWindowRateLimiter:
                 {"retry_after": self.window_seconds},
             )
         history.append(now_ts)
+
+    def track(self, subject: str, limit: int | None = None) -> int:
+        """Record a request without enforcing the limit. Returns remaining count."""
+        effective_limit = limit if limit is not None else self.limit
+        now = self.now_provider()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now_ts = now.timestamp()
+        cutoff = now_ts - self.window_seconds
+        history = self.events[subject]
+        while history and history[0] <= cutoff:
+            history.popleft()
+        history.append(now_ts)
+        return max(0, effective_limit - len(history))
