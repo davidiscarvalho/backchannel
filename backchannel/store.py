@@ -643,7 +643,13 @@ class BackchannelStore:
             actor = self._resolve_actor(conn, actor_identifier)
             if message["claimed_by_actor_id"]:
                 if message["claimed_by_actor_id"] == actor["id"]:
+                    ack_exists = conn.execute(
+                        "SELECT 1 FROM message_events WHERE message_id = ? AND event_type = 'ack' LIMIT 1",
+                        (message_id,),
+                    ).fetchone()
                     refreshed = self._get_message(conn, message_id)
+                    if ack_exists:
+                        return {"status": "already_acknowledged", "message": self._serialize_message(conn, refreshed)}
                     return {"status": "already_claimed", "message": self._serialize_message(conn, refreshed)}
                 raise APIError(409, "already_claimed", "This message has already been claimed")
 
