@@ -288,6 +288,7 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "webhook_url", "TEXT")
             self._ensure_column(conn, "channels", "webhook_secret", "TEXT")
             self._ensure_column(conn, "messages", "depends_on", "TEXT")
+            self._ensure_column(conn, "channels", "ttl_seconds", "INTEGER NOT NULL DEFAULT 86400")
             self._ensure_column(conn, "audit_cleanup_runs", "archived_channel_events", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "audit_cleanup_runs", "purged_channel_events", "INTEGER NOT NULL DEFAULT 0")
             conn.execute(
@@ -359,6 +360,13 @@ class BackchannelStore:
         related_channels = payload.get("related_channels", [])
         webhook_url = self._optional_string(payload.get("webhook_url"), allow_none=True)
         webhook_secret = self._optional_string(payload.get("webhook_secret"), allow_none=True)
+        raw_ttl = payload.get("ttl_seconds")
+        if raw_ttl is not None:
+            if not isinstance(raw_ttl, int) or raw_ttl < 300 or raw_ttl > 2592000:
+                raise APIError(422, "invalid_ttl_seconds", "ttl_seconds must be an integer between 300 and 2592000")
+            ttl_seconds = raw_ttl
+        else:
+            ttl_seconds = 86400
         effective_team_id = team_id
         channel_id = str(uuid.uuid4())
         now = to_timestamp(self.now())
@@ -366,8 +374,8 @@ class BackchannelStore:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -382,6 +390,7 @@ class BackchannelStore:
                     pinned_message,
                     webhook_url,
                     webhook_secret,
+                    ttl_seconds,
                     now,
                     now,
                 ),
@@ -495,11 +504,12 @@ class BackchannelStore:
         actor_label = self._optional_string(payload.get("actor_label"), allow_none=True)
         now = self.now()
         created_at = to_timestamp(now)
-        expires_at = to_timestamp(now + timedelta(hours=24))
         message_id = str(uuid.uuid4())
 
         with self.connect() as conn:
             channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            ttl_seconds = channel["ttl_seconds"] if "ttl_seconds" in channel.keys() else 86400
+            expires_at = to_timestamp(now + timedelta(seconds=ttl_seconds))
             # Validate metadata against channel's metadata_schema
             channel_schema = json.loads(channel["metadata_schema"]) if isinstance(channel["metadata_schema"], str) else channel["metadata_schema"]
             if channel_schema:
@@ -547,7 +557,19 @@ class BackchannelStore:
             )
             conn.commit()
             message = self._get_message(conn, message_id)
-            return MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
+            envelope = MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
+
+        webhook_url = channel["webhook_url"] if "webhook_url" in channel.keys() else None
+        if webhook_url:
+            webhook_secret = channel["webhook_secret"] if "webhook_secret" in channel.keys() else None
+            self.queue_webhook(
+                channel["id"],
+                "message.created",
+                {"message": envelope.message},
+                webhook_url,
+                webhook_secret,
+            )
+        return envelope
 
     def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
@@ -1383,6 +1405,7 @@ class BackchannelStore:
             "description": row["description"],
             "metadata_schema": json.loads(row["metadata_schema"]),
             "pinned_message": row["pinned_message"],
+            "ttl_seconds": row["ttl_seconds"] if "ttl_seconds" in row.keys() else 86400,
             "aliases": aliases,
             "related_channels": related,
             "created_at": row["created_at"],
