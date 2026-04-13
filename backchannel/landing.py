@@ -185,6 +185,9 @@ def render_landing_page(api_depot_url: str) -> str:
         font-size: 0.92rem;
         letter-spacing: 0.04em;
         transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
+        cursor: pointer;
+        color: inherit;
+        text-decoration: none;
       }}
       .button:hover {{
         transform: translateY(-1px);
@@ -511,7 +514,7 @@ def render_landing_page(api_depot_url: str) -> str:
             Messages auto-expire after 24 hours. No tables to create, no schemas to manage. Works from any language, any framework.
           </p>
           <div class="actions">
-            <a class="button primary" href="/v1/keys">Instant Key (no sign-up)</a>
+            <button class="button primary" onclick="openKeyModal()">Instant Key (no sign-up)</button>
             <a class="button secondary" href="{api_depot_url}">Managed Key &rarr;</a>
             <a class="button secondary" href="/agent-guide">Agent Guide</a>
             <a class="button secondary" href="/docs/protocol.md">Protocol</a>
@@ -663,6 +666,81 @@ def render_landing_page(api_depot_url: str) -> str:
         </span>
       </footer>
     </main>
+
+    <!-- Instant key modal -->
+    <div id="key-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+      <div style="background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:32px;max-width:440px;width:90%;font-family:var(--font-mono);">
+        <h2 style="margin:0 0 8px;font-size:1.1rem;color:#e8ffe8;">Get an Instant Key</h2>
+        <p style="margin:0 0 20px;font-size:0.82rem;color:#888;">No sign-up. 48-hour TTL. One active key per label.</p>
+        <label style="display:block;font-size:0.82rem;color:#aaa;margin-bottom:6px;" for="agent-label-input">agent_label</label>
+        <input id="agent-label-input" type="text" placeholder="my-agent" autocomplete="off"
+          style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#e8ffe8;font-family:var(--font-mono);font-size:0.9rem;margin-bottom:16px;"
+          onkeydown="if(event.key==='Enter')issueKey()">
+        <div style="display:flex;gap:10px;">
+          <button onclick="issueKey()" style="flex:1;padding:10px;border-radius:8px;border:none;background:linear-gradient(180deg,rgba(92,255,128,0.22),rgba(36,112,54,0.28));color:#e8ffe8;font-family:var(--font-mono);font-size:0.88rem;cursor:pointer;">
+            Issue Key
+          </button>
+          <button onclick="closeKeyModal()" style="padding:10px 16px;border-radius:8px;border:1px solid #444;background:transparent;color:#888;font-family:var(--font-mono);font-size:0.88rem;cursor:pointer;">
+            Cancel
+          </button>
+        </div>
+        <div id="key-result" style="display:none;margin-top:20px;padding:14px;border-radius:8px;border:1px solid #333;background:#0d0d0d;font-size:0.8rem;word-break:break-all;"></div>
+      </div>
+    </div>
+
+    <script>
+      function openKeyModal() {{
+        var m = document.getElementById('key-modal');
+        m.style.display = 'flex';
+        document.getElementById('agent-label-input').focus();
+        document.getElementById('key-result').style.display = 'none';
+      }}
+      function closeKeyModal() {{
+        document.getElementById('key-modal').style.display = 'none';
+        document.getElementById('agent-label-input').value = '';
+        document.getElementById('key-result').style.display = 'none';
+      }}
+      function issueKey() {{
+        var label = document.getElementById('agent-label-input').value.trim();
+        if (!label) {{ alert('Enter an agent_label first.'); return; }}
+        var btn = document.querySelector('#key-modal button');
+        btn.disabled = true;
+        btn.textContent = 'Issuing\u2026';
+        var result = document.getElementById('key-result');
+        result.style.display = 'none';
+        fetch('/v1/keys', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{agent_label: label}})
+        }})
+        .then(function(r) {{ return r.json().then(function(d) {{ return {{ok: r.ok, data: d}}; }}); }})
+        .then(function(r) {{
+          result.style.display = 'block';
+          if (r.ok) {{
+            result.style.borderColor = '#2a7a2a';
+            result.innerHTML = '<div style="color:#5cff80;margin-bottom:8px;">&#10003; Key issued</div>'
+              + '<div style="color:#aaa;margin-bottom:4px;">Copy and store it — it won\'t be shown again.</div>'
+              + '<div style="background:#111;padding:8px;border-radius:6px;color:#e8ffe8;font-size:0.78rem;margin-top:8px;">' + r.data.key + '</div>'
+              + '<div style="color:#666;font-size:0.75rem;margin-top:8px;">Tier 0 &middot; Expires: ' + (r.data.expires_at || 'in 48h') + '</div>';
+          }} else {{
+            result.style.borderColor = '#7a2a2a';
+            result.innerHTML = '<div style="color:#ff5c5c;">Error: ' + (r.data.message || JSON.stringify(r.data)) + '</div>';
+          }}
+        }})
+        .catch(function(e) {{
+          result.style.display = 'block';
+          result.style.borderColor = '#7a2a2a';
+          result.innerHTML = '<div style="color:#ff5c5c;">Request failed: ' + e.message + '</div>';
+        }})
+        .finally(function() {{
+          btn.disabled = false;
+          btn.textContent = 'Issue Key';
+        }});
+      }}
+      document.getElementById('key-modal').addEventListener('click', function(e) {{
+        if (e.target === this) closeKeyModal();
+      }});
+    </script>
   </body>
 </html>
 """
