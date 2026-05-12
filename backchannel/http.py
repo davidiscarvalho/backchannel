@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -240,25 +241,58 @@ class BackchannelApp:
                     remaining = self.api_rate_tracker.track(request.auth.key_id, limit=tier_limit)
                     # Will be appended to response headers below
                     request.rate_limit_remaining = remaining
-                # Idempotency-Key middleware for mutation requests
+                # Idempotency middleware for mutation requests.
+                #
+                # Behavior:
+                #   - Client-supplied Idempotency-Key: trusted as-is. Replays
+                #     return the original response with X-Idempotent-Replay: true.
+                #   - No Idempotency-Key: server synthesizes one from
+                #     (key_id, method, path, sha256(body)). Retries of the *exact
+                #     same request* within the cache window return the original
+                #     response. The synthetic key is surfaced as
+                #     Idempotency-Key + X-Idempotency-Source: server-auto so
+                #     clients can opt into stronger semantics with an explicit key.
                 idempotency_key = request.headers.get("Idempotency-Key")
-                if idempotency_key and method in {"POST", "PATCH", "DELETE"} and request.auth:
+                idempotency_source = "client" if idempotency_key else "server-auto"
+                is_mutation = method in {"POST", "PATCH", "DELETE"}
+                # Auto-idempotency is skipped on handlers that intentionally
+                # return distinct application-level responses for repeated
+                # calls (ack/claim/release/heartbeat — their already_X status
+                # codes are part of the contract). Explicit Idempotency-Key
+                # still works on those routes.
+                _auto_skip_suffixes = (
+                    "/ack", "/claim", "/claim-with-lease", "/release", "/heartbeat",
+                )
+                if (
+                    is_mutation
+                    and request.auth
+                    and not idempotency_key
+                    and not any(path.endswith(suffix) for suffix in _auto_skip_suffixes)
+                ):
+                    body_digest = hashlib.sha256(request.body or b"").hexdigest()[:32]
+                    idempotency_key = f"auto-{method}-{body_digest}-{path}"
+                if idempotency_key and is_mutation and request.auth:
                     cache_key = f"{request.auth.key_id}:{idempotency_key}"
                     cached = self.store.get_idempotent_response(cache_key)
                     if cached is not None:
                         replay = Response(
                             status=cached["status"],
                             body=cached["body"].encode("utf-8"),
-                            extra_headers=[("X-Idempotent-Replay", "true"), ("Idempotency-Key", idempotency_key)],
+                            extra_headers=[
+                                ("X-Idempotent-Replay", "true"),
+                                ("X-Idempotency-Source", idempotency_source),
+                                ("Idempotency-Key", idempotency_key),
+                            ],
                         )
                         return replay
                 response = handler(request, **match.groupdict())
                 if hasattr(request, "rate_limit_remaining"):
                     response.extra_headers.append(("X-RateLimit-Remaining", str(request.rate_limit_remaining)))
-                if idempotency_key and method in {"POST", "PATCH", "DELETE"} and request.auth and response.status < 300:
+                if idempotency_key and is_mutation and request.auth and response.status < 300:
                     cache_key = f"{request.auth.key_id}:{idempotency_key}"
                     self.store.cache_idempotent_response(cache_key, response.status, response.body.decode("utf-8"))
                     response.extra_headers.append(("Idempotency-Key", idempotency_key))
+                    response.extra_headers.append(("X-Idempotency-Source", idempotency_source))
                 return response
 
         return self.json_response(404, {"error": "not_found", "message": f"No route for {method} {path}"})
