@@ -61,6 +61,85 @@ class MessageEnvelope:
     cursor: str
 
 
+def _validate_against_schema(value: Any, schema: dict[str, Any], *, prefix: str = "") -> list[dict[str, str]]:
+    """Tiny JSON-Schema-subset validator. Supports:
+      type, required, properties, additionalProperties (bool only),
+      enum, minLength, maxLength, minimum, maximum, pattern.
+
+    Returns a list of {field, issue} dicts. Empty list means valid.
+    """
+    import re as _re
+
+    violations: list[dict[str, str]] = []
+    expected_type = schema.get("type")
+    type_map = {
+        "string": str,
+        "number": (int, float),
+        "integer": int,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+        "null": type(None),
+    }
+    if expected_type:
+        py = type_map.get(expected_type)
+        if py is not None and not isinstance(value, py):
+            violations.append({"field": prefix or "(root)", "issue": f"expected type '{expected_type}'"})
+            return violations  # don't cascade further
+
+    if expected_type == "string":
+        min_len = schema.get("minLength")
+        max_len = schema.get("maxLength")
+        if isinstance(min_len, int) and len(value) < min_len:
+            violations.append({"field": prefix, "issue": f"minLength {min_len}"})
+        if isinstance(max_len, int) and len(value) > max_len:
+            violations.append({"field": prefix, "issue": f"maxLength {max_len}"})
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str):
+            try:
+                if not _re.search(pattern, value):
+                    violations.append({"field": prefix, "issue": f"pattern '{pattern}' did not match"})
+            except _re.error as exc:
+                violations.append({"field": prefix, "issue": f"invalid pattern in schema: {exc}"})
+
+    if expected_type in ("number", "integer"):
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if minimum is not None and value < minimum:
+            violations.append({"field": prefix, "issue": f"minimum {minimum}"})
+        if maximum is not None and value > maximum:
+            violations.append({"field": prefix, "issue": f"maximum {maximum}"})
+
+    enum = schema.get("enum")
+    if enum is not None and value not in enum:
+        violations.append({"field": prefix, "issue": f"value must be one of {enum}"})
+
+    if expected_type == "object" or (expected_type is None and isinstance(value, dict)):
+        required_fields = schema.get("required", []) or []
+        for f in required_fields:
+            if f not in value:
+                violations.append({"field": f"{prefix}.{f}" if prefix else f, "issue": "required field missing"})
+        properties = schema.get("properties", {}) or {}
+        for f, sub_schema in properties.items():
+            if f in value:
+                sub_violations = _validate_against_schema(
+                    value[f], sub_schema, prefix=f"{prefix}.{f}" if prefix else f
+                )
+                violations.extend(sub_violations)
+        if schema.get("additionalProperties") is False:
+            allowed_keys = set(properties.keys())
+            for actual_key in value.keys():
+                if actual_key not in allowed_keys:
+                    violations.append(
+                        {
+                            "field": f"{prefix}.{actual_key}" if prefix else actual_key,
+                            "issue": "additional property not allowed",
+                        }
+                    )
+
+    return violations
+
+
 class BackchannelStore:
     def __init__(self, db_path: str | Path, now_provider: Callable[[], datetime] | None = None):
         self.db_path = str(db_path)
@@ -625,28 +704,14 @@ class BackchannelStore:
             # Validate metadata against channel's metadata_schema
             channel_schema = json.loads(channel["metadata_schema"]) if isinstance(channel["metadata_schema"], str) else channel["metadata_schema"]
             if channel_schema:
-                violations: list[dict[str, str]] = []
-                required_fields = channel_schema.get("required", [])
-                for field in required_fields:
-                    if field not in metadata:
-                        violations.append({"field": f"metadata.{field}", "issue": "required field missing"})
-                properties = channel_schema.get("properties", {})
-                for field, field_schema in properties.items():
-                    if field not in metadata:
-                        continue
-                    value = metadata[field]
-                    expected_type = field_schema.get("type")
-                    if expected_type:
-                        type_map = {"string": str, "number": (int, float), "integer": int, "boolean": bool, "array": list, "object": dict}
-                        expected_py = type_map.get(expected_type)
-                        if expected_py and not isinstance(value, expected_py):
-                            violations.append({"field": f"metadata.{field}", "issue": f"expected type '{expected_type}'"})
-                            continue
-                    allowed_values = field_schema.get("enum")
-                    if allowed_values is not None and value not in allowed_values:
-                        violations.append({"field": f"metadata.{field}", "issue": f"value must be one of {allowed_values}"})
+                violations = _validate_against_schema(metadata, channel_schema, prefix="metadata")
                 if violations:
-                    raise APIError(422, "metadata_validation_failed", "Message metadata failed channel schema validation", {"violations": violations})
+                    raise APIError(
+                        422,
+                        "metadata_validation_failed",
+                        "Message metadata failed channel schema validation",
+                        {"violations": violations},
+                    )
             actor = None
             if actor_identifier is not None:
                 actor = self._resolve_actor(conn, self._optional_string(actor_identifier))
