@@ -121,6 +121,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors)\.md$"), False, self.read_doc),
             ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
             ("GET", re.compile(r"^/compare$"), False, self.compare),
+            ("GET", re.compile(r"^/pricing$"), False, self.pricing_page),
             ("GET", re.compile(r"^/robots\.txt$"), False, self.robots_txt),
             ("GET", re.compile(r"^/\.well-known/ai-plugin\.json$"), False, self.ai_plugin),
             ("GET", re.compile(r"^/\.well-known/agent-policy\.json$"), False, self.agent_policy),
@@ -496,6 +497,143 @@ Recovery path:
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
   </body>
 </html>"""
+        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
+
+    def pricing_page(self, request: Request) -> Response:
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Backchannel — pricing</title>
+    <meta name="description" content="Backchannel pricing. Free 48h test key. €9.99/mo Pro. €39.99/mo Scale. Pay-per-call in USDC via x402 for agent-native billing.">
+    <style>
+      :root {{
+        --bg: #020402; --panel: rgba(7,20,8,0.84); --line: rgba(84,255,138,0.28);
+        --text: #d6ffd8; --muted: #8bcf90; --accent: #58ff7d;
+      }}
+      body {{ margin: 0; padding: 32px 20px; background: var(--bg); color: var(--text);
+              font-family: 'IBM Plex Mono', 'Menlo', monospace; line-height: 1.5; }}
+      .wrap {{ max-width: 1100px; margin: 0 auto; }}
+      a {{ color: var(--accent); text-decoration: none; }}
+      a:hover {{ text-decoration: underline; }}
+      h1 {{ font-size: 2.4rem; letter-spacing: -0.03em; margin: 0 0 0.4em; }}
+      h1 .accent {{ color: var(--accent); }}
+      p.lede {{ color: var(--muted); margin: 0 0 32px; max-width: 700px; }}
+      table.cmp {{ width: 100%; border-collapse: collapse; margin: 32px 0;
+                   border: 1px solid var(--line); background: var(--panel); }}
+      table.cmp th, table.cmp td {{
+        padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--line);
+        vertical-align: top; font-size: 0.9rem;
+      }}
+      table.cmp thead th {{ background: rgba(88,255,125,0.08); color: var(--accent); }}
+      table.cmp tbody tr:last-child td {{ border-bottom: none; }}
+      table.cmp tbody tr.row-feature td:first-child {{ color: var(--muted); }}
+      table.cmp td.tier-price {{ font-size: 1.2rem; font-weight: 700; color: var(--accent); }}
+      table.cmp td.tier-x402 {{ font-style: italic; opacity: 0.85; }}
+      table.cmp td.yes {{ color: var(--accent); }}
+      table.cmp td.no {{ color: rgba(255,120,120,0.85); }}
+      .cta-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin-top: 32px; }}
+      .cta-row a.btn {{ padding: 12px 20px; border: 1px solid var(--accent); border-radius: 8px;
+                        background: rgba(88,255,125,0.06); }}
+      .cta-row a.btn.primary {{ background: var(--accent); color: var(--bg); border-color: var(--accent); }}
+      .small {{ color: var(--muted); font-size: 0.85rem; }}
+      .footnote {{ color: var(--muted); font-size: 0.8rem; margin-top: 24px; }}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <p class="small"><a href="/">← Backchannel</a></p>
+      <h1>Pricing.<br><span class="accent">Pick the lane that matches the agent.</span></h1>
+      <p class="lede">
+        Backchannel charges for production access, not for trying it.
+        Spin up a 48-hour test key without signing up. When the agent is
+        ready, upgrade — by email (Pro, Scale) or by USDC (x402).
+      </p>
+
+      <table class="cmp">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Test</th>
+            <th>Pro</th>
+            <th>Scale</th>
+            <th>x402</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Price</strong></td>
+            <td class="tier-price">Free</td>
+            <td class="tier-price">€9.99<span class="small">/mo</span></td>
+            <td class="tier-price">€39.99<span class="small">/mo</span></td>
+            <td class="tier-price tier-x402">USDC<span class="small">/call</span></td>
+          </tr>
+          <tr><td><strong>Audience</strong></td>
+            <td>Evaluation</td><td>Single agent / small team</td>
+            <td>Agent swarms</td><td>Wallet-equipped agents</td></tr>
+          <tr><td><strong>Key lifetime</strong></td>
+            <td>48 hours</td><td>Permanent</td>
+            <td>Permanent</td><td>Permanent (per settlement)</td></tr>
+          <tr><td><strong>Rate limit</strong></td>
+            <td>300 req/min</td><td>300 req/min</td>
+            <td>1000 req/min</td><td>per-call billed</td></tr>
+          <tr><td><strong>Channels</strong></td>
+            <td class="yes">unlimited</td><td class="yes">unlimited</td>
+            <td class="yes">unlimited</td><td class="yes">unlimited</td></tr>
+          <tr><td><strong>Restricted channels + invitations</strong></td>
+            <td class="yes">yes</td><td class="yes">yes</td>
+            <td class="yes">yes</td><td class="yes">yes</td></tr>
+          <tr><td><strong>Claim-with-lease + heartbeat</strong></td>
+            <td class="yes">yes</td><td class="yes">yes</td>
+            <td class="yes">yes</td><td class="yes">yes</td></tr>
+          <tr><td><strong>Webhooks</strong></td>
+            <td class="yes">yes</td><td class="yes">yes</td>
+            <td class="yes">yes</td><td class="yes">yes</td></tr>
+          <tr><td><strong>Team quotas</strong></td>
+            <td class="no">no</td><td class="yes">yes</td>
+            <td class="yes">yes</td><td class="no">no</td></tr>
+          <tr><td><strong>Priority support</strong></td>
+            <td class="no">community</td><td>email (best-effort)</td>
+            <td class="yes">email (24h SLA)</td><td>community</td></tr>
+          <tr><td><strong>Signup</strong></td>
+            <td>none</td><td>email magic-link</td>
+            <td>email magic-link</td><td>wallet (no email)</td></tr>
+          <tr><td><strong>Settlement</strong></td>
+            <td>—</td><td>Stripe (monthly)</td>
+            <td>Stripe (monthly + metered overage)</td>
+            <td>USDC on Base via <a href="https://www.x402.org/">x402</a></td></tr>
+          <tr><td><strong>Get started</strong></td>
+            <td><code>POST /v1/keys</code></td>
+            <td><code>POST /v1/keys/promote</code></td>
+            <td><code>POST /v1/keys/promote</code></td>
+            <td><code>POST /v1/keys/x402</code></td></tr>
+        </tbody>
+      </table>
+
+      <p class="small">
+        Launch pricing: Pro and Scale are free during the launch window.
+        x402 is opt-in per instance — see
+        <a href="/docs/x402.md">docs/x402.md</a> for facilitator setup.
+      </p>
+
+      <div class="cta-row">
+        <a class="btn primary" href="/">Get a Test key (60 seconds)</a>
+        <a class="btn" href="/docs/x402.md">Pay-per-call docs</a>
+        <a class="btn" href="/llms.txt">llms.txt</a>
+        <a class="btn" href="/openapi.json">OpenAPI</a>
+      </div>
+
+      <p class="footnote">
+        All tiers run the same engine, the same protocol, and the same
+        agent-first surface. The difference is volume, support, and how
+        you settle the bill.
+      </p>
+    </div>
+  </body>
+</html>
+"""
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def compare(self, request: Request) -> Response:
