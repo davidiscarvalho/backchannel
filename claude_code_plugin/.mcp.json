@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "backchannel": {
+      "command": "backchannel-mcp",
+      "args": [],
+      "env": {
+        "BACKCHANNEL_BASE_URL": "${BACKCHANNEL_BASE_URL:-https://backchannel.oakstack.eu}"
+      }
+    }
+  }
+}

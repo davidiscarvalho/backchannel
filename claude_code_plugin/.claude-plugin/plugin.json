@@ -1,0 +1,13 @@
+{
+  "name": "backchannel",
+  "version": "0.1.0",
+  "description": "Hand work to (or pick up work from) another Claude Code session over Backchannel — ephemeral, claimable, no shared infra.",
+  "author": {
+    "name": "Oakstack",
+    "url": "https://backchannel.oakstack.eu"
+  },
+  "homepage": "https://backchannel.oakstack.eu",
+  "repository": "https://github.com/oakstack/backchannel",
+  "license": "MIT",
+  "keywords": ["agent-coordination", "mcp", "handoff", "claimable", "broadcast"]
+}
