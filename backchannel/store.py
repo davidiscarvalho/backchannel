@@ -2066,6 +2066,72 @@ class BackchannelStore:
             ).fetchone()
             return dict(row) if row else None
 
+    # --- credit ledger -----------------------------------------------
+
+    def credit_balance_micros(self, key_id: str) -> int:
+        """Return the current USDC credit balance in micros (1 USDC = 1_000_000)."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?",
+                (key_id,),
+            ).fetchone()
+            return int(row["credit_balance_micros"]) if row else 0
+
+    def add_credit_micros(self, key_id: str, amount_micros: int) -> int:
+        """Increment a key's credit balance and return the new balance.
+
+        Caller is responsible for idempotency (e.g. checking that the same
+        x402 settlement_id is not applied twice).
+        """
+        if amount_micros < 0:
+            raise APIError(422, "invalid_amount", "amount_micros must be >= 0")
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE api_keys SET credit_balance_micros = credit_balance_micros + ? WHERE key_id = ?",
+                (amount_micros, key_id),
+            )
+            if cursor.rowcount == 0:
+                raise APIError(404, "key_not_found", "Key not found")
+            row = conn.execute(
+                "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?", (key_id,)
+            ).fetchone()
+            conn.commit()
+            return int(row["credit_balance_micros"])
+
+    def debit_credit_micros(self, key_id: str, amount_micros: int) -> int:
+        """Atomically debit a key's credit balance. Returns the new balance.
+
+        Raises APIError(402, 'insufficient_credit') if the balance would go
+        negative — the agent should top up via /v1/keys/x402.
+        """
+        if amount_micros < 0:
+            raise APIError(422, "invalid_amount", "amount_micros must be >= 0")
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE api_keys SET credit_balance_micros = credit_balance_micros - ? "
+                "WHERE key_id = ? AND credit_balance_micros >= ?",
+                (amount_micros, key_id, amount_micros),
+            )
+            if cursor.rowcount == 0:
+                row = conn.execute(
+                    "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?",
+                    (key_id,),
+                ).fetchone()
+                if row is None:
+                    raise APIError(404, "key_not_found", "Key not found")
+                raise APIError(
+                    402,
+                    "insufficient_credit",
+                    f"Need {amount_micros} micros, balance is {row['credit_balance_micros']}. "
+                    "Top up via POST /v1/keys/x402.",
+                    {"balance_micros": int(row["credit_balance_micros"])},
+                )
+            row = conn.execute(
+                "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?", (key_id,)
+            ).fetchone()
+            conn.commit()
+            return int(row["credit_balance_micros"])
+
     # --- Channel metrics ------------------------------------------------
 
     def get_channel_metrics(self, identifier: str, key_id: str) -> dict[str, Any]:

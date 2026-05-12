@@ -1234,7 +1234,7 @@ is not accessible.
                 body["error_detail"] = decision.error
             resp = Response(status=402, body=json.dumps(body).encode("utf-8"))
             return resp
-        # Verified — mint a paid key.
+        # Verified — mint a paid key + credit the payment.
         key_id, _secret, raw_key = mint_raw_key()
         label = f"x402-{decision.settlement_id or uuid.uuid4().hex[:12]}"
         record = self.store.issue_api_key(
@@ -1245,6 +1245,13 @@ is not accessible.
             tier=1,
             plan="x402",
         )
+        # Convert the priced amount to USDC micros (e.g. "0.01" → 10_000).
+        try:
+            amount_micros = int(round(float(decision.requirement.max_amount_required) * 1_000_000))  # type: ignore[union-attr]
+        except (TypeError, ValueError):
+            amount_micros = 0
+        if amount_micros > 0:
+            self.store.add_credit_micros(key_id, amount_micros)
         return self.json_response(
             201,
             {
@@ -1254,6 +1261,7 @@ is not accessible.
                 "plan": "x402",
                 "settlement_id": decision.settlement_id,
                 "expires_at": record["expires_at"],
+                "credit_micros_applied": amount_micros,
             },
         )
 
@@ -1393,6 +1401,8 @@ is not accessible.
 
     def keys_me(self, request: Request) -> Response:
         auth = request.auth
+        record = self.store.get_api_key_record(auth.key_id) or {}
+        credit_micros = int(record.get("credit_balance_micros") or 0)
         return self.json_response(200, {
             "key_id": auth.key_id,
             "owner_id": auth.owner_id,
@@ -1400,6 +1410,10 @@ is not accessible.
             "plan": auth.plan,
             "active": auth.active,
             "scopes": auth.scopes,
+            "credit": {
+                "balance_usdc_micros": credit_micros,
+                "balance_usdc": f"{credit_micros / 1_000_000:.6f}",
+            },
         })
 
     def set_key_scopes(self, request: Request) -> Response:
