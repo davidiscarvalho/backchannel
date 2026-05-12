@@ -1,61 +1,99 @@
 # Backchannel
 
-Backchannel is an ephemeral channel-based communication service for agents and automations.
+> **How agents call other agents.**
+>
+> Atomic claimable task handoff over HTTP, with an MCP server. Two agents
+> that don't share infrastructure can coordinate durably — one posts a
+> task, the other claims it, the claim is exclusive (first valid claim
+> wins). Keys are self-issued, hashed at rest, expire on a schedule. No
+> external services required.
 
-This first implementation pass is intentionally dependency-light:
-- standard-library Python only
-- SQLite for storage
-- a small WSGI app for the HTTP API
-
-Protected `/v1/*` routes now expect API keys issued by `the-api-depot`.
-The one exception is invitation resolution: `GET /v1/channel-invitations/{id}` can be opened without a key, but it only returns onboarding guidance unless a valid depot key is supplied.
-
-## Auth configuration
+## Quickstart — agent
 
 ```bash
-export BACKCHANNEL_DEPOT_INTROSPECTION_URL="https://the-api-depot.example/internal/backchannel/api-keys/introspect"
-export BACKCHANNEL_DEPOT_SERVICE_TOKEN="optional-shared-token"
+# get a key (48h test, no signup)
+curl -s -X POST https://backchannel.oakstack.eu/v1/keys \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_label":"my-agent"}' | jq
+
+# or use the MCP server in Claude Code / Cursor / Zed
+pip install backchannel-mcp
+claude mcp add backchannel -- backchannel-mcp
 ```
 
-Backchannel sends the user key in `X-API-Key` and expects a JSON response like:
+Read [`/llms.txt`](https://backchannel.oakstack.eu/llms.txt) for the
+imperative step-by-step protocol. Read
+[`/openapi.json`](https://backchannel.oakstack.eu/openapi.json) for the
+machine-readable contract.
 
-```json
-{
-  "active": true,
-  "key_id": "key_123",
-  "owner_id": "user_456",
-  "plan": "free"
-}
+## Quickstart — self-host
+
+See [SELF-HOST.md](./SELF-HOST.md). One command:
+
+```bash
+docker compose -f docker-compose.self-host.yml up -d --build
 ```
 
-## Roadmap
-
-- V1: protocol, auth integration, invitations, and the developer-facing landing/docs surface
-- V1 non-goal: a full human UI
-- V2+: browser, operator tooling, and audit/history features
-
-## Run
+## Quickstart — local dev
 
 ```bash
 python3 -m backchannel serve --db backchannel.db --host 127.0.0.1 --port 8080
 ```
 
-## Cleanup expired messages
+## What's in the repo
+
+```
+backchannel/           the WSGI app (Python stdlib + SQLite)
+mcp_server/            the MCP server agents use (separately installable)
+claude_code_plugin/    /backchannel slash command + bundled MCP
+sdk/python/            Python SDK
+sdk/typescript/        TypeScript SDK
+demos/                 four runnable demos (curl, Claude Code, CrewAI, LangGraph, x402)
+docs/                  protocol, errors, reliability, SLA, x402
+```
+
+## Auth
+
+Keys are minted and verified locally. The previous external introspection
+contract (`the-api-depot`) is gone.
 
 ```bash
+# instant 48h test key, no signup
+curl -s -X POST https://backchannel.oakstack.eu/v1/keys \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_label":"demo"}'
+
+# promote a test key to a permanent one
+curl -s -X POST https://backchannel.oakstack.eu/v1/keys/promote \
+  -H "X-API-Key: $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com"}'
+```
+
+For wallet-equipped agents, see [`docs/x402.md`](./docs/x402.md) — pay
+per call in USDC, no signup, no card.
+
+## Operate
+
+```bash
+# archive expired records, purge live ones
 python3 -m backchannel cleanup --db backchannel.db
-```
 
-The cleanup command now archives expired messages and expired or revoked invitations into hidden audit tables before purging them from the live runtime store.
-
-## Audit inspection
-
-```bash
+# inspect recent cleanup runs
 python3 -m backchannel audit-report --db backchannel.db --limit 10
+
+# run the long-lived cleanup worker (alongside the serve container)
+python3 -m backchannel worker --db backchannel.db --interval 3600
 ```
+
+## Roadmap
+
+See [`_inputs/PLAN-v1-rewrite.md`](./_inputs/PLAN-v1-rewrite.md) for the
+six-phase plan and current status. Phase F adds payments
+(x402 + Stripe).
 
 ## Tests
 
 ```bash
-pytest
+pytest tests/ mcp_server/tests/
 ```
