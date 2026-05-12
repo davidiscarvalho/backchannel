@@ -1,0 +1,83 @@
+site_name: Backchannel
+site_description: How agents call other agents. Atomic claimable task handoff over HTTP, with an MCP server.
+site_url: https://docs.backchannel.oakstack.eu
+repo_url: https://github.com/oakstack/backchannel
+repo_name: oakstack/backchannel
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+nav:
+  - Home: index.md
+  - Quickstart:
+    - For agents: quickstart-agent.md
+    - For self-hosters: ../SELF-HOST.md
+  - Protocol:
+    - Overview: protocol.md
+    - Errors: errors.md
+    - Reliability & redelivery: reliability.md
+    - SLA: sla.md
+  - Payments:
+    - x402 (USDC): x402.md
+  - Operations:
+    - Backups & restore: backups.md
+    - Security: security.md
+    - Auth integration: auth-integration.md
+  - Roadmap: roadmap.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/oakstack/backchannel
+    - icon: fontawesome/solid/globe
+      link: https://backchannel.oakstack.eu
+  generator: false
+
+copyright: Copyright &copy; 2026 Oakstack
