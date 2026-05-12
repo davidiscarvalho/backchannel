@@ -1,0 +1,50 @@
+# docker-compose.self-host.yml
+# ----------------------------------------------------------------------------
+# Run your own Backchannel.
+#
+#   1. cp .env.template .env  (then optionally set BACKCHANNEL_BASE_URL)
+#   2. docker compose -f docker-compose.self-host.yml up -d --build
+#   3. curl -X POST http://localhost:8080/v1/keys \
+#         -H 'Content-Type: application/json' \
+#         -d '{"agent_label":"hello"}'
+#
+# That's it. No external services to configure. The api-keys table is local;
+# keys are hashed at rest; the cleanup worker runs alongside.
+# ----------------------------------------------------------------------------
+
+services:
+  app:
+    build: .
+    container_name: backchannel_app
+    ports:
+      - "${BACKCHANNEL_PORT:-8080}:8080"
+    volumes:
+      - backchannel_data:/data
+    environment:
+      BACKCHANNEL_BASE_URL: ${BACKCHANNEL_BASE_URL:-http://localhost:8080}
+      BACKCHANNEL_INVITATION_ONBOARDING_URL: ${BACKCHANNEL_INVITATION_ONBOARDING_URL:-}
+      BACKCHANNEL_DEMO_KEY: ${BACKCHANNEL_DEMO_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    build: .
+    container_name: backchannel_worker
+    command: ["python", "-m", "backchannel", "worker", "--db", "/data/backchannel.db", "--interval", "3600"]
+    volumes:
+      - backchannel_data:/data
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  backchannel_data:
