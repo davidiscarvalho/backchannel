@@ -353,6 +353,36 @@ class BackchannelStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    key_id TEXT PRIMARY KEY,
+                    key_hash TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    agent_label TEXT,
+                    plan TEXT NOT NULL DEFAULT 'free',
+                    tier INTEGER NOT NULL DEFAULT 0,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    team_id TEXT,
+                    team_name TEXT,
+                    email TEXT,
+                    credit_balance_micros INTEGER NOT NULL DEFAULT 0,
+                    promoted_at TEXT,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    last_used_at TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_keys_label ON api_keys(agent_label) WHERE active = 1"
+            )
             conn.commit()
 
     def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
@@ -1880,6 +1910,163 @@ class BackchannelStore:
                 (key_id, json.dumps(sorted(scopes))),
             )
             conn.commit()
+
+    # --- API keys -------------------------------------------------------
+
+    def issue_api_key(
+        self,
+        *,
+        key_id: str,
+        key_hash: str,
+        owner_id: str,
+        agent_label: str | None,
+        tier: int = 0,
+        plan: str = "free",
+        email: str | None = None,
+        team_id: str | None = None,
+        team_name: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        now = self.now()
+        expires_at = None
+        if ttl_seconds is not None:
+            expires_at = to_timestamp(now + timedelta(seconds=ttl_seconds))
+        with self.connect() as conn:
+            if agent_label:
+                existing = conn.execute(
+                    "SELECT key_id FROM api_keys WHERE agent_label = ? AND active = 1",
+                    (agent_label,),
+                ).fetchone()
+                if existing is not None:
+                    raise APIError(
+                        409,
+                        "label_in_use",
+                        "An active key for this agent label already exists. Revoke it or promote via POST /v1/keys/promote.",
+                    )
+            conn.execute(
+                """
+                INSERT INTO api_keys (
+                    key_id, key_hash, owner_id, agent_label, plan, tier, active,
+                    team_id, team_name, email, credit_balance_micros, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    key_id,
+                    key_hash,
+                    owner_id,
+                    agent_label,
+                    plan,
+                    tier,
+                    team_id,
+                    team_name,
+                    email,
+                    to_timestamp(now),
+                    expires_at,
+                ),
+            )
+            conn.commit()
+        return {
+            "key_id": key_id,
+            "owner_id": owner_id,
+            "agent_label": agent_label,
+            "plan": plan,
+            "tier": tier,
+            "team_id": team_id,
+            "team_name": team_name,
+            "expires_at": expires_at,
+        }
+
+    def lookup_api_key(self, *, key_id: str, key_hash: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT key_id, owner_id, agent_label, plan, tier, active, team_id, team_name,
+                       email, credit_balance_micros, expires_at, created_at, promoted_at
+                FROM api_keys
+                WHERE key_id = ? AND key_hash = ?
+                """,
+                (key_id, key_hash),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE api_keys SET last_used_at = ? WHERE key_id = ?",
+                (to_timestamp(self.now()), key_id),
+            )
+            conn.commit()
+            return {
+                "key_id": row["key_id"],
+                "owner_id": row["owner_id"],
+                "agent_label": row["agent_label"],
+                "plan": row["plan"],
+                "tier": row["tier"],
+                "active": bool(row["active"]),
+                "team_id": row["team_id"],
+                "team_name": row["team_name"],
+                "email": row["email"],
+                "credit_balance_micros": row["credit_balance_micros"],
+                "expires_at": parse_timestamp(row["expires_at"]) if row["expires_at"] else None,
+                "created_at": row["created_at"],
+                "promoted_at": row["promoted_at"],
+            }
+
+    def promote_api_key(
+        self,
+        *,
+        current_key_id: str,
+        new_key_id: str,
+        new_key_hash: str,
+        email: str,
+    ) -> dict[str, Any]:
+        now = self.now()
+        with self.connect() as conn:
+            current = conn.execute(
+                "SELECT key_id, owner_id, agent_label, team_id, team_name, promoted_at, expires_at FROM api_keys WHERE key_id = ?",
+                (current_key_id,),
+            ).fetchone()
+            if current is None:
+                raise APIError(404, "key_not_found", "Key not found")
+            if current["promoted_at"] is not None:
+                raise APIError(409, "already_promoted", "This key has already been promoted")
+            conn.execute(
+                """
+                INSERT INTO api_keys (
+                    key_id, key_hash, owner_id, agent_label, plan, tier, active,
+                    team_id, team_name, email, credit_balance_micros, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, 'free', 1, 1, ?, ?, ?, 0, ?, NULL)
+                """,
+                (
+                    new_key_id,
+                    new_key_hash,
+                    current["owner_id"],
+                    current["agent_label"],
+                    current["team_id"],
+                    current["team_name"],
+                    email,
+                    to_timestamp(now),
+                ),
+            )
+            conn.execute(
+                "UPDATE api_keys SET promoted_at = ?, active = 0 WHERE key_id = ?",
+                (to_timestamp(now), current_key_id),
+            )
+            conn.commit()
+        return {"key_id": new_key_id, "tier": 1, "expires_at": None}
+
+    def revoke_api_key(self, key_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE api_keys SET active = 0 WHERE key_id = ?", (key_id,))
+            conn.commit()
+
+    def get_api_key_record(self, key_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT key_id, owner_id, agent_label, plan, tier, active, email, credit_balance_micros, expires_at, created_at, last_used_at FROM api_keys WHERE key_id = ?",
+                (key_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    # --- Channel metrics ------------------------------------------------
 
     def get_channel_metrics(self, identifier: str, key_id: str) -> dict[str, Any]:
         with self.connect() as conn:

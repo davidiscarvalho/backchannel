@@ -14,7 +14,14 @@ from urllib.parse import parse_qs
 from urllib.request import Request as URLRequest
 from urllib.request import urlopen
 
-from backchannel.auth import AuthContext, DepotAuthenticator
+from backchannel.auth import (
+    AuthContext,
+    DepotAuthenticator,
+    LocalAuthenticator,
+    hash_key,
+    mint_raw_key,
+    split_key,
+)
 from backchannel.landing import render_landing_page
 from backchannel.openapi import build_openapi_spec
 from backchannel.rate_limit import SlidingWindowRateLimiter
@@ -63,19 +70,18 @@ class BackchannelApp:
     def __init__(
         self,
         store: BackchannelStore,
-        authenticator: DepotAuthenticator | None = None,
+        authenticator: DepotAuthenticator | LocalAuthenticator | None = None,
         invitation_onboarding_url: str | None = None,
         invitation_rate_limiter: SlidingWindowRateLimiter | None = None,
     ):
         self.store = store
-        self.authenticator = authenticator or DepotAuthenticator.from_env()
+        self.authenticator = authenticator or LocalAuthenticator(store=store)
         self.invitation_onboarding_url = invitation_onboarding_url or os.environ.get(
-            "BACKCHANNEL_DEPOT_BACKCHANNEL_URL",
-            "https://the-api-depot.example/backchannel",
+            "BACKCHANNEL_INVITATION_ONBOARDING_URL",
+            "",
         )
         self.base_url = os.environ.get("BACKCHANNEL_BASE_URL", "")
-        self.depot_internal_base_url = os.environ.get("BACKCHANNEL_DEPOT_INTERNAL_BASE_URL", "")
-        self.depot_service_token = os.environ.get("BACKCHANNEL_DEPOT_SERVICE_TOKEN", "")
+        # Legacy depot env vars are intentionally ignored — auth is self-contained now.
         self.demo_key = os.environ.get("BACKCHANNEL_DEMO_KEY", "")
         self.invitation_rate_limiter = invitation_rate_limiter or SlidingWindowRateLimiter(
             limit=10,
@@ -888,65 +894,52 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
         return self.json_response(200, invitation)
 
     def issue_key(self, request: Request) -> Response:
+        """Issue a Tier 0 key (48h TTL, no signup). Local — no external service."""
         self.key_issuance_rate_limiter.check(request.remote_addr)
-        if not self.depot_internal_base_url:
-            raise APIError(
-                503,
-                "key_issuance_unavailable",
-                f"Self-serve key issuance is not available on this instance. "
-                f"Obtain a key at {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}",
-            )
         body = request.json()
         agent_label = body.get("agent_label", "")
         if not isinstance(agent_label, str) or not agent_label.strip():
             raise APIError(422, "missing_field", "'agent_label' is required")
-        depot_url = f"{self.depot_internal_base_url.rstrip('/')}/internal/keys/issue-tier0"
-        depot_body = json.dumps({"agent_label": agent_label.strip(), "service": "backchannel"}).encode("utf-8")
-        req = URLRequest(url=depot_url, data=depot_body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if self.depot_service_token:
-            req.add_header("Authorization", f"Bearer {self.depot_service_token}")
-        try:
-            with urlopen(req, timeout=10) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except HTTPError as exc:
-            if exc.code == 409:
-                raise APIError(
-                    409,
-                    "label_in_use",
-                    "An active Tier 0 key for this label already exists. Wait for expiry or promote via POST /v1/keys/promote.",
-                )
-            raise APIError(502, "depot_error", "Key issuance failed") from exc
-        except URLError as exc:
-            raise APIError(502, "depot_unreachable", "API Depot is unavailable") from exc
-        return self.json_response(201, {"key": payload.get("key"), "tier": 0, "expires_at": payload.get("expires_at")})
+        agent_label = agent_label.strip()[:128]
+        key_id, _secret, raw_key = mint_raw_key()
+        record = self.store.issue_api_key(
+            key_id=key_id,
+            key_hash=hash_key(raw_key),
+            owner_id=agent_label,
+            agent_label=agent_label,
+            tier=0,
+            plan="free",
+            ttl_seconds=48 * 3600,
+        )
+        return self.json_response(
+            201,
+            {
+                "key": raw_key,
+                "key_id": key_id,
+                "tier": 0,
+                "expires_at": record["expires_at"],
+                "agent_label": agent_label,
+            },
+        )
 
     def promote_key(self, request: Request) -> Response:
-        if not self.depot_internal_base_url:
-            raise APIError(503, "key_promotion_unavailable", "Self-serve key promotion is not configured on this instance")
+        """Promote a Tier 0 key to a permanent Tier 1 key. Issues a NEW key
+        and revokes the old one. The new key is returned exactly once."""
         body = request.json()
         email = body.get("email", "")
         if not isinstance(email, str) or not email.strip():
             raise APIError(422, "missing_field", "'email' is required")
-        depot_url = f"{self.depot_internal_base_url.rstrip('/')}/internal/keys/promote"
-        depot_body = json.dumps({"key": request.auth.raw_key, "email": email.strip()}).encode("utf-8")
-        req = URLRequest(url=depot_url, data=depot_body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if self.depot_service_token:
-            req.add_header("Authorization", f"Bearer {self.depot_service_token}")
-        try:
-            with urlopen(req, timeout=10) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except HTTPError as exc:
-            if exc.code in {409, 422}:
-                raise APIError(409, "already_promoted", "This key has already been promoted to Tier 1 or higher")
-            if exc.code == 410:
-                promote_url = f"{self.base_url}/v1/keys/promote" if self.base_url else "/v1/keys/promote"
-                raise APIError(410, "key_expired", "This Tier 0 key has expired", {"upgrade_url": promote_url})
-            raise APIError(502, "depot_error", "Key promotion failed") from exc
-        except URLError as exc:
-            raise APIError(502, "depot_unreachable", "API Depot is unavailable") from exc
-        return self.json_response(200, {"key": payload.get("key"), "tier": 1, "expires_at": None})
+        email = email.strip()[:320]
+        new_key_id, _secret, new_raw_key = mint_raw_key()
+        result = self.store.promote_api_key(
+            current_key_id=request.auth.key_id,
+            new_key_id=new_key_id,
+            new_key_hash=hash_key(new_raw_key),
+            email=email,
+        )
+        if hasattr(self.authenticator, "invalidate_cache"):
+            self.authenticator.invalidate_cache(request.auth.raw_key)
+        return self.json_response(200, {"key": new_raw_key, "key_id": new_key_id, "tier": 1, "expires_at": None})
 
     def task_broadcast(self, request: Request) -> Response:
         body = request.json()
@@ -1157,7 +1150,7 @@ Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
 def create_app(
     db_path: str | Path = "backchannel.db",
     now_provider: Callable[[], Any] | None = None,
-    authenticator: DepotAuthenticator | None = None,
+    authenticator: DepotAuthenticator | LocalAuthenticator | None = None,
     invitation_onboarding_url: str | None = None,
 ) -> BackchannelApp:
     store = BackchannelStore(db_path=db_path, now_provider=now_provider)

@@ -1,14 +1,63 @@
+"""Authentication for Backchannel.
+
+Self-contained: keys are issued, hashed at rest, and verified locally.
+No external dependency (the previous DepotAuthenticator and its depot
+introspection HTTP contract are gone — see auth_compat.py for the legacy
+shim retained only for the existing test suite).
+"""
+
 from __future__ import annotations
 
-import json
+import hashlib
 import os
+import secrets
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Callable
 
 from backchannel.store import APIError
+
+if TYPE_CHECKING:
+    from backchannel.store import BackchannelStore
+
+
+# --- Key format ------------------------------------------------------------
+
+KEY_PREFIX = "bck"
+KEY_ID_BYTES = 9   # 12 chars base64 -> 18 chars w/ prefix
+SECRET_BYTES = 24  # 32 chars base64
+TIER_0_TTL = timedelta(hours=48)
+
+
+def _b64(nbytes: int) -> str:
+    # url-safe, stripped of padding so keys never contain '='
+    return secrets.token_urlsafe(nbytes).rstrip("=")
+
+
+def mint_raw_key() -> tuple[str, str, str]:
+    """Return (key_id, secret, raw_key). raw_key = f'{key_id}.{secret}'."""
+    key_id = f"{KEY_PREFIX}_{_b64(KEY_ID_BYTES)}"
+    secret = _b64(SECRET_BYTES)
+    return key_id, secret, f"{key_id}.{secret}"
+
+
+def hash_key(raw_key: str) -> str:
+    """Constant-form digest of a raw key for at-rest storage."""
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+
+def split_key(raw_key: str) -> tuple[str, str]:
+    """Return (key_id, secret). Raises ValueError if malformed."""
+    if "." not in raw_key:
+        raise ValueError("Key must be formatted as '<key_id>.<secret>'")
+    key_id, secret = raw_key.split(".", 1)
+    if not key_id or not secret:
+        raise ValueError("Key id and secret must both be present")
+    return key_id, secret
+
+
+# --- Auth context ----------------------------------------------------------
 
 
 @dataclass
@@ -24,7 +73,79 @@ class AuthContext:
     scopes: list[str] | None = None
 
 
+# --- Local authenticator (default) ----------------------------------------
+
+
+class LocalAuthenticator:
+    """Authenticates against the local api_keys table.
+
+    The store is the single source of truth. Keys are hashed at rest; the
+    raw key is never persisted. A small in-memory cache (60s) prevents a
+    DB hit on every request without weakening revocation by more than the
+    cache TTL.
+    """
+
+    def __init__(self, store: "BackchannelStore", cache_ttl_seconds: int = 60):
+        self.store = store
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self._cache: dict[str, tuple[AuthContext, float]] = {}
+
+    def authenticate(self, headers: dict[str, str]) -> AuthContext:
+        raw_key = headers.get("X-Api-Key") or headers.get("X-API-Key")
+        if not raw_key:
+            raise APIError(401, "unauthorized", "Missing X-API-Key header")
+
+        cached = self._cache.get(raw_key)
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
+
+        try:
+            key_id, _ = split_key(raw_key)
+        except ValueError as exc:
+            raise APIError(401, "unauthorized", "Malformed API key") from exc
+
+        record = self.store.lookup_api_key(key_id=key_id, key_hash=hash_key(raw_key))
+        if record is None:
+            raise APIError(401, "unauthorized", "Invalid API key")
+        if not record.get("active", True):
+            raise APIError(401, "unauthorized", "Inactive API key")
+        if record.get("expires_at"):
+            expires = record["expires_at"]
+            if isinstance(expires, datetime) and expires <= datetime.now(timezone.utc):
+                raise APIError(410, "key_expired", "This key has expired", {"upgrade_url": "/v1/keys/promote"})
+
+        ctx = AuthContext(
+            raw_key=raw_key,
+            key_id=record["key_id"],
+            owner_id=record["owner_id"],
+            plan=record.get("plan") or "free",
+            active=bool(record.get("active", True)),
+            tier=int(record.get("tier") or 0),
+            team_id=record.get("team_id"),
+            team_name=record.get("team_name"),
+        )
+        self._cache[raw_key] = (ctx, time.monotonic() + self.cache_ttl_seconds)
+        return ctx
+
+    def invalidate_cache(self, raw_key: str | None = None) -> None:
+        if raw_key is None:
+            self._cache.clear()
+            return
+        self._cache.pop(raw_key, None)
+
+
+# --- Legacy / test compatibility ------------------------------------------
+
+
 class DepotAuthenticator:
+    """LEGACY shim. Preserved only so the existing test suite keeps working
+    without modification while we migrate.
+
+    Tests construct ``DepotAuthenticator(introspector=callable)`` to inject
+    a lambda that returns ``AuthContext``. New code should use
+    ``LocalAuthenticator`` against the store.
+    """
+
     def __init__(self, introspector: Callable[[str], AuthContext]):
         self.introspector = introspector
 
@@ -32,7 +153,6 @@ class DepotAuthenticator:
         raw_key = headers.get("X-Api-Key") or headers.get("X-API-Key")
         if not raw_key:
             raise APIError(401, "unauthorized", "Missing X-API-Key header")
-
         try:
             context = self.introspector(raw_key)
         except LookupError as exc:
@@ -41,92 +161,11 @@ class DepotAuthenticator:
             raise APIError(401, "unauthorized", "Inactive API key")
         return context
 
-    @classmethod
-    def from_env(cls) -> "DepotAuthenticator":
-        url = os.environ.get("BACKCHANNEL_DEPOT_INTROSPECTION_URL")
-        token = os.environ.get("BACKCHANNEL_DEPOT_SERVICE_TOKEN")
-        return cls(http_introspector(url=url, service_token=token))
+
+# --- Factories -------------------------------------------------------------
 
 
-def http_introspector(url: str | None, service_token: str | None = None, timeout: int = 5) -> Callable[[str], AuthContext]:
-    _cache: dict[str, tuple[AuthContext, float]] = {}
-
-    def introspect(raw_key: str) -> AuthContext:
-        key_id = raw_key.split(".", 1)[0] if "." in raw_key else raw_key
-        cached = _cache.get(key_id)
-        if cached is not None and time.monotonic() < cached[1]:
-            return cached[0]
-
-        if not url:
-            raise APIError(
-                503,
-                "auth_not_configured",
-                "BACKCHANNEL_DEPOT_INTROSPECTION_URL is not configured",
-            )
-
-        request = Request(url=url, method="GET")
-        request.add_header("X-API-Key", raw_key)
-        if service_token:
-            request.add_header("Authorization", f"Bearer {service_token}")
-
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            if exc.code in {401, 403, 404}:
-                details: dict[str, Any] = {}
-                try:
-                    body = json.loads(exc.read().decode("utf-8"))
-                    if isinstance(body, dict) and "upgrade_url" in body:
-                        details["upgrade_url"] = body["upgrade_url"]
-                except Exception:
-                    pass
-                raise APIError(401, "unauthorized", "Invalid API key", details) from exc
-            raise APIError(502, "depot_error", "API Depot introspection failed") from exc
-        except URLError as exc:
-            raise APIError(502, "depot_unreachable", "API Depot introspection is unavailable") from exc
-
-        ctx = auth_context_from_payload(raw_key, payload)
-        _cache[ctx.key_id] = (ctx, time.monotonic() + 60)
-        return ctx
-
-    return introspect
-
-
-def auth_context_from_payload(raw_key: str, payload: dict[str, Any]) -> AuthContext:
-    if not isinstance(payload, dict):
-        raise APIError(502, "depot_error", "API Depot introspection returned an invalid payload")
-
-    key_id = payload.get("key_id")
-    owner_id = payload.get("owner_id")
-    plan = payload.get("plan", "unknown")
-    active = payload.get("active", False)
-    tier = payload.get("tier", 1)
-    team_id = payload.get("team_id")
-    team_name = payload.get("team_name")
-
-    if not isinstance(key_id, str) or not key_id:
-        raise APIError(502, "depot_error", "API Depot introspection did not include key_id")
-    if not isinstance(owner_id, str) or not owner_id:
-        raise APIError(502, "depot_error", "API Depot introspection did not include owner_id")
-    if not isinstance(plan, str):
-        raise APIError(502, "depot_error", "API Depot introspection returned an invalid plan")
-    if not isinstance(active, bool):
-        raise APIError(502, "depot_error", "API Depot introspection returned an invalid active flag")
-    if not isinstance(tier, int):
-        tier = 1
-    if team_id is not None and not isinstance(team_id, str):
-        team_id = None
-    if team_name is not None and not isinstance(team_name, str):
-        team_name = None
-
-    return AuthContext(
-        raw_key=raw_key,
-        key_id=key_id,
-        owner_id=owner_id,
-        plan=plan,
-        active=active,
-        tier=tier,
-        team_id=team_id,
-        team_name=team_name,
-    )
+def authenticator_from_env(store: "BackchannelStore") -> LocalAuthenticator:
+    """Build the default LocalAuthenticator from the store. No env vars
+    required — the depot URL/token contract is retired."""
+    return LocalAuthenticator(store=store)
