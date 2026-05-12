@@ -22,6 +22,12 @@ from backchannel.auth import (
     mint_raw_key,
     split_key,
 )
+from backchannel.x402 import (
+    PaymentRequirement,
+    X402Config,
+    X402Decision,
+    X402Middleware,
+)
 from backchannel.landing import render_landing_page
 from backchannel.openapi import build_openapi_spec
 from backchannel.rate_limit import SlidingWindowRateLimiter
@@ -83,6 +89,7 @@ class BackchannelApp:
         self.base_url = os.environ.get("BACKCHANNEL_BASE_URL", "")
         # Legacy depot env vars are intentionally ignored — auth is self-contained now.
         self.demo_key = os.environ.get("BACKCHANNEL_DEMO_KEY", "")
+        self.x402 = X402Middleware(X402Config.from_env())
         self.invitation_rate_limiter = invitation_rate_limiter or SlidingWindowRateLimiter(
             limit=10,
             window_seconds=60,
@@ -140,6 +147,7 @@ class BackchannelApp:
             ("DELETE", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)$"), True, self.delete_message),
             ("DELETE", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.delete_channel),
             ("POST", re.compile(r"^/v1/keys$"), False, self.issue_key),
+            ("POST", re.compile(r"^/v1/keys/x402$"), False, self.issue_key_x402),
             ("POST", re.compile(r"^/v1/keys/promote$"), True, self.promote_key),
             ("POST", re.compile(r"^/v1/tasks/broadcast$"), True, self.task_broadcast),
             ("POST", re.compile(r"^/v1/tasks/claim-and-ack$"), True, self.task_claim_and_ack),
@@ -1001,6 +1009,53 @@ is not accessible.
                 "tier": 0,
                 "expires_at": record["expires_at"],
                 "agent_label": agent_label,
+            },
+        )
+
+    def issue_key_x402(self, request: Request) -> Response:
+        """x402-paid key issuance.
+
+        Agents call this with no auth. If x402 is configured, the first call
+        returns 402 with the payment requirement. The agent settles in USDC,
+        retries with the X-PAYMENT header, and on successful verification
+        we mint a Tier-1 key with a credit balance — no signup, no card,
+        no human in the loop.
+        """
+        if not self.x402.is_active():
+            raise APIError(
+                503,
+                "x402_unavailable",
+                "x402 payments are not configured on this instance. Use POST /v1/keys for a free 48h key.",
+            )
+        payment_header = request.headers.get("X-Payment") or request.headers.get("X-PAYMENT")
+        resource = f"{self.base_url or ''}/v1/keys/x402".lstrip("/")
+        decision = self.x402.evaluate(resource=resource, payment_header=payment_header)
+        if decision.status == 402:
+            body = self.x402.build_402_body(decision.requirement or PaymentRequirement())
+            if decision.error:
+                body["error_detail"] = decision.error
+            resp = Response(status=402, body=json.dumps(body).encode("utf-8"))
+            return resp
+        # Verified — mint a paid key.
+        key_id, _secret, raw_key = mint_raw_key()
+        label = f"x402-{decision.settlement_id or uuid.uuid4().hex[:12]}"
+        record = self.store.issue_api_key(
+            key_id=key_id,
+            key_hash=hash_key(raw_key),
+            owner_id=label,
+            agent_label=label,
+            tier=1,
+            plan="x402",
+        )
+        return self.json_response(
+            201,
+            {
+                "key": raw_key,
+                "key_id": key_id,
+                "tier": 1,
+                "plan": "x402",
+                "settlement_id": decision.settlement_id,
+                "expires_at": record["expires_at"],
             },
         )
 
