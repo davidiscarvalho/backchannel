@@ -597,12 +597,14 @@ Allow: /
             "schema_version": "v1",
             "name_for_human": "Backchannel",
             "name_for_model": "backchannel",
-            "description_for_human": "Ephemeral message bus for AI agent coordination. Claimable tasks, broadcast channels, 24h TTL.",
+            "description_for_human": "How agents call other agents. Atomic claimable task handoff over HTTP, with an MCP server.",
             "description_for_model": (
-                "Backchannel is an ephemeral message bus for agent coordination. "
-                "Use it for multi-agent task handoffs (claimable channels — one consumer wins) "
-                "or fan-out broadcasts (all consumers read). Messages expire after 24h. "
-                "No persistent storage. Instant free key via POST /v1/keys."
+                "Backchannel lets one agent hand work to another. "
+                "Use a claimable channel when exactly one other agent should pick up the task "
+                "(first valid claim wins; the rest get 409 — do not retry on 409). "
+                "Use a broadcast channel for fan-out. Messages auto-expire after the channel's TTL. "
+                "Get a key with POST /v1/keys (instant, no signup) or use the bundled MCP server "
+                "and the first tool call will mint one for you."
             ),
             "auth": {
                 "type": "user_http",
@@ -649,9 +651,12 @@ Allow: /
         base = self.base_url or "https://backchannel.oakstack.eu"
         payload = {
             "name": "Backchannel",
+            "tagline": "How agents call other agents.",
             "description": (
-                "Ephemeral, claimable message bus for AI agent coordination. "
-                "24h TTL, broadcast or single-owner channels — perfect for multi-agent handoffs without shared databases."
+                "Atomic claimable task handoff over HTTP. Two agents that don't "
+                "share a process can coordinate durably: one posts a task, the "
+                "other claims it, and the claim is exclusive (first valid claim "
+                "wins; the rest get 409)."
             ),
             "version": "1.0",
             "base_url": base,
@@ -659,29 +664,50 @@ Allow: /
                 "type": "api_key",
                 "header": "X-API-Key",
                 "obtain_url": f"{base}/v1/keys",
-                "obtain_description": "POST /v1/keys with an agent_label to receive an instant free key. No sign-up required.",
-                "human_obtain_url": self.invitation_onboarding_url,
-                "human_obtain_description": "Human operators can sign up at the Oakstack API Depot for managed keys and higher tiers.",
+                "obtain_description": "POST /v1/keys with {\"agent_label\": \"...\"} → instant 48h key, no signup. Promote later with /v1/keys/promote.",
+                "pay_per_call_url": f"{base}/v1/keys/x402",
+                "pay_per_call_description": "Agents with a wallet can pay-per-call in USDC via x402 — no signup, no card.",
+            },
+            "transports": {
+                "http": {"openapi_url": f"{base}/openapi.json"},
+                "mcp": {
+                    "package": "backchannel-mcp",
+                    "install": "pip install backchannel-mcp && claude mcp add backchannel -- backchannel-mcp",
+                    "tools": [
+                        "post_task", "claim_task", "await_result",
+                        "broadcast", "subscribe", "list_channels", "issue_key",
+                    ],
+                },
             },
             "capabilities": [
                 "multi_agent_coordination",
-                "ephemeral_memory",
-                "claimable_tasks",
-                "session_handoff",
+                "atomic_task_handoff",
+                "claim_with_lease_and_heartbeat",
+                "broadcast_fanout",
+                "restricted_channels_with_invitations",
+                "per_channel_metadata_schema",
+                "idempotent_writes",
             ],
+            "claim_guarantees": {
+                "exclusivity": "first_valid_claim_wins",
+                "duplicate_response": "409 already_claimed",
+                "redelivery": "lease_expiry_returns_message_to_queue",
+            },
             "recommended_system_prompt_snippet": (
-                f"You have access to Backchannel — an ephemeral message bus for agent coordination.\n"
-                f"Base URL: {base}\n"
-                f"Auth: X-API-Key header (get a free key: POST {base}/v1/keys with {{\"agent_label\": \"your-agent\"}})\n\n"
-                "Use Backchannel when:\n"
-                "- One agent hands off work to exactly one other agent → createChannel (mode: claimable) + createMessage + claimMessage\n"
-                "- One agent broadcasts to N consumers → createChannel (mode: broadcast) + createMessage + listMessages\n"
-                "- Agents need temporary shared state without a database → any channel, messages expire after 24h\n\n"
-                "Never use Backchannel for: persistent storage, human chat, or anything that needs to survive beyond 24h."
+                f"You can call other agents via Backchannel ({base}).\n"
+                f"Step 0: POST {base}/v1/keys {{\"agent_label\": \"<your name>\"}} → get a key.\n"
+                "Step 1: POST /v1/channels {\"name\": \"<lane>\", \"mode\": \"claimable\"}.\n"
+                "Step 2: POST /v1/channels/<id>/messages {\"content\": \"<task>\"}.\n"
+                "Step 3: On 409 from a claim, the other agent got it first — move on.\n"
+                "Idempotency: send Idempotency-Key on every write. See /llms.txt for the full spec."
             ),
             "openapi_url": f"{base}/openapi.json",
             "agent_guide_url": f"{base}/agent-guide",
-            "supported_frameworks": ["LangGraph", "CrewAI", "AutoGen", "LlamaIndex", "Semantic Kernel"],
+            "llms_txt_url": f"{base}/llms.txt",
+            "supported_frameworks": [
+                "Claude Code (MCP)", "Cursor (MCP)", "Zed (MCP)",
+                "LangGraph", "CrewAI", "AutoGen", "LlamaIndex", "n8n",
+            ],
         }
         return self.json_response(200, payload)
 
