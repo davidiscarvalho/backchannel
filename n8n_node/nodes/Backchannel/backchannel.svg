@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60" aria-hidden="true">
+  <rect x="2" y="2" width="56" height="56" rx="10" fill="#020402" stroke="#58ff7d" stroke-width="2"/>
+  <circle cx="18" cy="22" r="5" fill="#58ff7d"/>
+  <circle cx="42" cy="38" r="5" fill="#58ff7d"/>
+  <path d="M22 24 L38 36" stroke="#58ff7d" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M36 32 L38 36 L34 38" fill="none" stroke="#58ff7d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="30" y="54" text-anchor="middle" font-family="monospace" font-size="9" fill="#58ff7d">backchannel</text>
+</svg>
