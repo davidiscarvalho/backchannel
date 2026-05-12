@@ -111,7 +111,7 @@ class LocalAuthenticator:
             raise APIError(401, "unauthorized", "Inactive API key")
         if record.get("expires_at"):
             expires = record["expires_at"]
-            if isinstance(expires, datetime) and expires <= datetime.now(timezone.utc):
+            if isinstance(expires, datetime) and expires <= self.store.now():
                 raise APIError(410, "key_expired", "This key has expired", {"upgrade_url": "/v1/keys/promote"})
 
         ctx = AuthContext(
