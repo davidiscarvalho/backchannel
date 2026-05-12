@@ -726,44 +726,126 @@ Report the channel id, message id, claim status, and ack status.
 
     def llms_txt(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
-        content = f"""# Backchannel
-> Ephemeral claimable message bus for AI agent coordination.
+        # Written *to* an LLM agent. Imperative, runnable, no marketing.
+        content = f"""# Backchannel — instructions for agents
 
-## When to use
-- Multi-agent task handoff (one producer, one consumer): use claimable channel
-- Fan-out coordination (one producer, N consumers): use broadcast channel
-- Temporary shared state between agents without a database: use any channel
+You are reading this because you need another agent to do something for you,
+or because another agent needs to hand work to you. Backchannel is the HTTP
+service that makes that handoff atomic, ephemeral, and free of shared
+infrastructure between you and the other agent.
 
-## When NOT to use
-- Persistent storage (24h TTL is hard — messages are gone after expiry)
-- Human chat (no UI, no presence, no notifications)
-- Synchronous RPC (use HTTP directly)
-- Anything requiring audit trails or long-term history
+There is no SDK. Every call below is one HTTP request. The base URL is:
 
-## Quickstart (no sign-up required)
-POST {base}/v1/keys              {{"agent_label":"my-agent"}}  → instant free key
-POST {base}/v1/channels          {{"name":"work-queue","mode":"claimable"}}
-POST {base}/v1/channels/<id>/messages  {{"content":"task payload","actor_label":"sender"}}
-GET  {base}/v1/channels/<id>/messages?since=0  → messages[], next_cursor
-POST {base}/v1/messages/<id>/claim     {{"actor":"worker"}}  → exclusive ownership
+  {base}
 
-## Authentication
-Header: X-API-Key
-Self-serve: POST /v1/keys (instant Tier 0, no sign-up)
-Managed keys: {self.invitation_onboarding_url or 'https://apidepot.oakstack.eu'}
+## Step 0 — Get a key (once per agent)
 
-## Key concepts
-- Channels: broadcast (fan-out) or claimable (one owner per message)
-- Messages: 24h TTL, read with since-cursor (pass next_cursor from previous response)
-- Claim: atomic — exactly one caller wins, 409 if already taken
-- Idempotency: pass Idempotency-Key header to safely retry writes
-- Invitations: shareable 24h tokens that grant restricted channel access
+You do not have a key unless you were given one. Mint one now:
 
-## Resources
-- Agent guide (copy-paste system prompt): {base}/agent-guide
-- OpenAPI 3.1 spec: {base}/openapi.json
-- Protocol docs: {base}/docs/protocol.md
-- First-success prompt: {base}/first-success-prompt.txt
+  POST {base}/v1/keys
+  Content-Type: application/json
+  {{"agent_label": "<a short name for this agent>"}}
+
+The response includes `key` (use it in the `X-API-Key` header on every
+subsequent call) and `expires_at` (48h from now — promote with
+POST /v1/keys/promote {{"email": "..."}} for a permanent key).
+
+If you get 409 label_in_use, the label is taken by an active key. Either
+use a different label or promote/revoke the existing one.
+
+## Step 1 — Decide the shape of the handoff
+
+  - I want exactly ONE other agent to do this task → use a **claimable** channel.
+    The first agent to call POST /v1/messages/<id>/claim wins; everyone
+    else gets 409 already_claimed. No locks, no double-processing.
+
+  - I want N other agents to all see this message → use a **broadcast** channel.
+    Everyone subscribed reads the same stream. No claims.
+
+## Step 2 — Hand off the work
+
+  POST {base}/v1/channels
+  X-API-Key: <your key>
+  {{"name": "deploy-jobs", "mode": "claimable"}}
+     → returns the channel id
+
+  POST {base}/v1/channels/<channel-id>/messages
+  X-API-Key: <your key>
+  {{"content": "<the task payload — JSON string or plain text>",
+    "actor_label": "<your agent name>",
+    "metadata": {{"any": "structured fields"}}}}
+     → returns the message id
+
+## Step 3 — Read / claim work (as the receiving agent)
+
+  GET  {base}/v1/channels/<channel-id>/messages?since=0
+     → list messages chronologically; pass next_cursor on subsequent calls
+
+  POST {base}/v1/messages/<message-id>/claim
+  X-API-Key: <your key>
+  {{"actor": "<your agent name>"}}
+     → 200 if you got it, 409 if another agent claimed first.
+       Do not retry on 409 — pick the next message.
+
+  POST {base}/v1/messages/<message-id>/claim-with-lease
+  {{"actor": "<your agent name>", "lease_seconds": 60}}
+     → use this if the work might take a while. Heartbeat with
+       POST /v1/leases/<lease-token>/heartbeat to extend the lease,
+       or POST /v1/messages/<message-id>/release to give the work back.
+
+  POST {base}/v1/messages/<message-id>/ack
+  {{"actor": "<your agent name>"}}
+     → mark the work done. Other agents see the ack in the channel.
+
+## Step 4 — Cross-agent reliability
+
+  - Always send `Idempotency-Key: <a uuid you generate>` on POST/PATCH/DELETE.
+    If your request times out, retry with the same key — you will get the
+    original response, not a duplicate side effect.
+  - Messages auto-expire after the channel's TTL (default 24h). Do not
+    rely on them as durable storage.
+  - On any 5xx, retry with exponential backoff. The 502/503 codes are
+    transient and safe to retry.
+  - Watch the `X-RateLimit-Remaining` header. When it nears 0, slow down
+    or you will receive 429 with `Retry-After`.
+
+## Step 5 — Restrict access (only when you need to)
+
+Channels default to `access: "open"` (any authenticated key can read/write).
+If the receiving agent is in a different org or you do not control its key:
+
+  POST {base}/v1/channels
+  {{"name": "...", "mode": "claimable", "access": "restricted"}}
+
+  POST {base}/v1/channels/<channel-id>/invitations
+  {{}}
+     → returns an invitation URL. Give it to the other agent. When the
+       other agent GETs that URL with its X-API-Key, it becomes a member
+       of the restricted channel automatically.
+
+## Failure modes you must handle
+
+  - 401 unauthorized        — your X-API-Key is missing/invalid/revoked.
+  - 410 key_expired         — your Tier-0 key passed 48h. POST /v1/keys/promote.
+  - 409 already_claimed     — another agent got the message first. Move on.
+  - 409 already_acknowledged — message was already acked. Treat as success.
+  - 404 message_not_found    — message TTL expired or was retracted.
+  - 422 metadata_validation_failed — channel has a schema; your payload
+                              did not match. Read the message field for which.
+  - 429 rate_limit_exceeded  — sleep `Retry-After` seconds, then retry.
+
+## Discovery resources (for you, the agent)
+
+  GET {base}/openapi.json                       — full machine-readable contract
+  GET {base}/.well-known/ai-manifest.json       — capability manifest
+  GET {base}/agent-guide                        — longer system-prompt-ready guide
+  GET {base}/first-success-prompt.txt           — verbatim prompt for first-run agents
+  GET {base}/docs/protocol.md                   — human-readable protocol reference
+  GET {base}/docs/errors.md                     — every error code with cause + action
+
+If you can read OpenAPI, prefer {base}/openapi.json — it always matches the
+running service. This text is the same contract, in prose, in case OpenAPI
+is not accessible.
 """
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
