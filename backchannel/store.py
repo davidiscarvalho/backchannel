@@ -383,7 +383,79 @@ class BackchannelStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_api_keys_label ON api_keys(agent_label) WHERE active = 1"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_audit (
+                    id TEXT PRIMARY KEY,
+                    occurred_at TEXT NOT NULL,
+                    actor_key_id TEXT,
+                    subject_key_id TEXT,
+                    event_type TEXT NOT NULL,
+                    remote_addr TEXT,
+                    detail TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_security_audit_time ON security_audit(occurred_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_security_audit_actor ON security_audit(actor_key_id)"
+            )
             conn.commit()
+
+    # --- security audit log -----------------------------------------
+
+    def record_security_event(
+        self,
+        *,
+        event_type: str,
+        actor_key_id: str | None = None,
+        subject_key_id: str | None = None,
+        remote_addr: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """Write an append-only security event. Used for sensitive ops:
+        key issuance, key promotion, key revocation, channel deletion,
+        member add/remove, x402 settlement.
+        Never raises — security logging must not block the user op."""
+        try:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO security_audit
+                        (id, occurred_at, actor_key_id, subject_key_id, event_type, remote_addr, detail)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        to_timestamp(self.now()),
+                        actor_key_id,
+                        subject_key_id,
+                        event_type,
+                        remote_addr,
+                        json.dumps(detail or {}, default=str),
+                    ),
+                )
+                conn.commit()
+        except Exception:
+            # Swallow — never fail the user op due to audit logging.
+            pass
+
+    def list_security_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, occurred_at, actor_key_id, subject_key_id, event_type, remote_addr, detail "
+                "FROM security_audit ORDER BY occurred_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    **dict(row),
+                    "detail": json.loads(row["detail"]) if row["detail"] else {},
+                }
+                for row in rows
+            ]
 
     def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         name = self._required_string(payload, "name")

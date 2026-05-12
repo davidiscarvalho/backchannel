@@ -187,6 +187,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/account/usage$"), True, self.account_usage),
             ("GET", re.compile(r"^/status$"), False, self.status),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/metrics$"), True, self.channel_metrics),
+            ("GET", re.compile(r"^/v1/security/audit$"), True, self.security_audit),
         ]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
@@ -1236,6 +1237,12 @@ is not accessible.
             plan="free",
             ttl_seconds=48 * 3600,
         )
+        self.store.record_security_event(
+            event_type="key.issue.tier0",
+            subject_key_id=key_id,
+            remote_addr=request.remote_addr,
+            detail={"agent_label": agent_label, "tier": 0},
+        )
         return self.json_response(
             201,
             {
@@ -1289,6 +1296,16 @@ is not accessible.
             amount_micros = 0
         if amount_micros > 0:
             self.store.add_credit_micros(key_id, amount_micros)
+        self.store.record_security_event(
+            event_type="key.issue.x402",
+            subject_key_id=key_id,
+            remote_addr=request.remote_addr,
+            detail={
+                "settlement_id": decision.settlement_id,
+                "amount_micros": amount_micros,
+                "network": decision.requirement.network if decision.requirement else None,
+            },
+        )
         return self.json_response(
             201,
             {
@@ -1319,6 +1336,13 @@ is not accessible.
         )
         if hasattr(self.authenticator, "invalidate_cache"):
             self.authenticator.invalidate_cache(request.auth.raw_key)
+        self.store.record_security_event(
+            event_type="key.promote",
+            actor_key_id=request.auth.key_id,
+            subject_key_id=new_key_id,
+            remote_addr=request.remote_addr,
+            detail={"email": email, "from_tier": 0, "to_tier": 1},
+        )
         return self.json_response(200, {"key": new_raw_key, "key_id": new_key_id, "tier": 1, "expires_at": None})
 
     def task_broadcast(self, request: Request) -> Response:
@@ -1506,6 +1530,29 @@ is not accessible.
         auth = request.auth
         metrics = self.store.get_channel_metrics(identifier, auth.key_id)
         return self.json_response(200, metrics)
+
+    def security_audit(self, request: Request) -> Response:
+        """Return the latest security events for the *requesting* key only.
+
+        A key cannot see events for other keys it does not own. Server-wide
+        audit access is a future admin-tier surface; today the endpoint is
+        scoped so a tier-1 agent can self-audit its own promotion / issuance
+        history.
+        """
+        limit = 100
+        limit_q = request.query_value("limit")
+        if limit_q:
+            try:
+                limit = max(1, min(int(limit_q), 500))
+            except ValueError:
+                pass
+        all_events = self.store.list_security_events(limit=500)
+        key_id = request.auth.key_id
+        events = [
+            e for e in all_events
+            if e.get("actor_key_id") == key_id or e.get("subject_key_id") == key_id
+        ][:limit]
+        return self.json_response(200, {"data": events, "count": len(events)})
 
     def json_response(self, status: int, payload: dict[str, Any]) -> Response:
         return Response(status=status, body=json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"))
