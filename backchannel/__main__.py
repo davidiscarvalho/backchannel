@@ -1,12 +1,35 @@
 from __future__ import annotations
 
 import argparse
+import signal
+import sys
+import threading
 import time
 from pathlib import Path
 from wsgiref.simple_server import make_server
 
 from backchannel.http import create_app
 from backchannel.store import BackchannelStore
+
+
+# Module-level flag toggled by signal handlers. Subcommand loops poll it
+# at safe yield points (between sleeps + work batches) so SIGTERM produces
+# a clean shutdown rather than an interrupted DB write.
+_shutdown = threading.Event()
+
+
+def _install_signal_handlers() -> None:
+    def _handle(signum, frame):
+        if not _shutdown.is_set():
+            print(f"received signal {signum}, draining…", flush=True)
+        _shutdown.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _handle)
+        except (OSError, ValueError):
+            # Some environments (Windows, restricted sandboxes) block this — ignore.
+            pass
 
 
 def main() -> int:
@@ -32,9 +55,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "worker":
+        _install_signal_handlers()
         store = BackchannelStore(Path(args.db))
         print(f"Backchannel cleanup worker started (interval={args.interval}s)", flush=True)
-        while True:
+        while not _shutdown.is_set():
             try:
                 summary = store.archive_and_cleanup_expired_records()
                 print(
@@ -56,7 +80,14 @@ def main() -> int:
                     print(f"webhooks delivered={delivered}", flush=True)
             except Exception as exc:
                 print(f"webhook delivery error: {exc}", flush=True)
-            time.sleep(args.interval)
+            # Sleep in small slices so SIGTERM is observed quickly.
+            slept = 0.0
+            while slept < args.interval and not _shutdown.is_set():
+                step = min(1.0, args.interval - slept)
+                time.sleep(step)
+                slept += step
+        print("worker drained, exiting", flush=True)
+        return 0
 
     if args.command == "cleanup":
         store = BackchannelStore(Path(args.db))
@@ -104,10 +135,24 @@ def main() -> int:
             )
         return 0
 
+    _install_signal_handlers()
     app = create_app(db_path=Path(args.db))
     with make_server(args.host, args.port, app) as server:
-        print(f"Backchannel listening on http://{args.host}:{args.port}")
-        server.serve_forever()
+        print(f"Backchannel listening on http://{args.host}:{args.port}", flush=True)
+        # Run serve_forever in a thread so the main thread can wait on
+        # the shutdown event. On SIGTERM we ask the server to stop
+        # accepting new connections; in-flight requests complete because
+        # wsgiref handles each request on the main thread synchronously.
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            while not _shutdown.is_set():
+                _shutdown.wait(timeout=1.0)
+        finally:
+            print("draining HTTP server…", flush=True)
+            server.shutdown()
+            server_thread.join(timeout=10)
+            print("server stopped", flush=True)
     return 0
 
 
