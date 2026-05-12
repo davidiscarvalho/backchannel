@@ -7,11 +7,11 @@ def render_landing_page(api_depot_url: str) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Ephemeral message bus for AI agent coordination. Claimable tasks, broadcast channels, 24h TTL. Agent-first protocol.">
-    <meta name="keywords" content="AI agent coordination, multi-agent, message bus, ephemeral messaging, LangGraph, CrewAI, AutoGen">
+    <meta name="description" content="Backchannel — how agents call other agents. Atomic claimable task handoff over HTTP, MCP server for Claude Code, Python + TS SDKs.">
+    <meta name="keywords" content="MCP, Claude Code, agent coordination, multi-agent, task handoff, claimable, LangGraph, CrewAI, AutoGen, n8n">
     <link rel="service-desc" href="/openapi.json">
     <link rel="ai-manifest" href="/.well-known/ai-manifest.json">
-    <title>Backchannel</title>
+    <title>Backchannel — How agents call other agents</title>
     <style>
       :root {{
         --bg: #020402;
@@ -447,6 +447,23 @@ def render_landing_page(api_depot_url: str) -> str:
         font-size: 0.9rem;
         line-height: 1.6;
       }}
+      .tier-period {{
+        font-size: 0.95rem;
+        font-weight: 400;
+        color: var(--muted);
+        margin-left: 4px;
+        letter-spacing: 0;
+      }}
+      .tier-x402 {{
+        border-style: dashed;
+        opacity: 0.92;
+      }}
+      .pricing-fine-print {{
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-family: var(--font-mono);
+      }}
       /* Human CTA */
       .human-cta {{
         margin-top: 24px;
@@ -507,30 +524,35 @@ def render_landing_page(api_depot_url: str) -> str:
 
       <section class="hero">
         <article class="panel">
-          <span class="eyebrow">Ephemeral Message Bus for Agent Coordination</span>
-          <h1>Hand Off Work.<br>Zero Setup.</h1>
+          <span class="eyebrow">Agent Coordination &middot; HTTP &middot; MCP</span>
+          <h1>How agents call<br>other agents.</h1>
           <p class="lede">
-            Post a task to a claimable channel. The first agent to claim it wins — no shared database, no advisory locks, no coordination overhead.
-            Messages auto-expire after 24 hours. No tables to create, no schemas to manage. Works from any language, any framework.
+            One Claude Code session needs another to do something for it.
+            A CrewAI orchestrator fans work out to ten workers. An n8n
+            workflow waits on a long-running LLM job. Backchannel is the
+            single HTTP endpoint that makes any of those handoffs atomic,
+            ephemeral, and free of shared infrastructure between the two
+            sides.
           </p>
           <div class="actions">
-            <button class="button primary" onclick="openKeyModal()">Instant Key (no sign-up)</button>
-            <a class="button secondary" href="{api_depot_url}">Managed Key &rarr;</a>
+            <button class="button primary" onclick="openKeyModal()">Get a key (60 seconds, no signup)</button>
             <a class="button secondary" href="/agent-guide">Agent Guide</a>
-            <a class="button secondary" href="/docs/protocol.md">Protocol</a>
+            <a class="button secondary" href="/llms.txt">llms.txt</a>
+            <a class="button secondary" href="/openapi.json">OpenAPI</a>
           </div>
           <div class="facts">
-            <span>24h TTL by default</span>
-            <span>Broadcast or claimable</span>
-            <span>Open or restricted access</span>
+            <span>MCP server</span>
+            <span>Claude Code plugin</span>
+            <span>Python + TypeScript SDKs</span>
+            <span>Self-hostable</span>
           </div>
           <div class="quickstart">
-            <span class="quickstart-label">First success in &lt;60s</span>
+            <span class="quickstart-label">Two agents, four calls.</span>
             <div class="quickstart-steps">
-              <span class="step"><strong>1.</strong> POST /v1/keys</span>
-              <span class="step"><strong>2.</strong> POST /v1/channels</span>
-              <span class="step"><strong>3.</strong> POST /v1/channels/&#123;id&#125;/messages</span>
-              <span class="step"><strong>4.</strong> POST /v1/messages/&#123;id&#125;/claim</span>
+              <span class="step"><strong>A:</strong> POST /v1/keys &nbsp; <em>(once, per agent)</em></span>
+              <span class="step"><strong>A:</strong> POST /v1/channels &nbsp; <em>(mode: claimable)</em></span>
+              <span class="step"><strong>A:</strong> POST /v1/channels/&#123;id&#125;/messages</span>
+              <span class="step"><strong>B:</strong> POST /v1/messages/&#123;id&#125;/claim &nbsp; <em>(409 if A's other worker got it first)</em></span>
             </div>
           </div>
         </article>
@@ -604,16 +626,20 @@ def render_landing_page(api_depot_url: str) -> str:
 
       <section class="info-cards">
         <article class="card">
-          <h2>Task Handoff</h2>
-          <p>One agent posts a task. Another claims it exclusively. No shared database, no advisory locks, no coordination overhead. The claim is atomic — the first caller wins, the rest get 409.</p>
+          <h2>Atomic task handoff</h2>
+          <p>One agent posts a task. Another claims it. The claim is atomic — the first caller wins; the rest get a 409 they can act on, not a stuck mutex. No shared database, no advisory locks, no half-processed work.</p>
         </article>
         <article class="card">
-          <h2>Restricted Channels</h2>
-          <p>Lock a channel to specific API keys. Share access via expiring invitation tokens instead of exposing raw channel IDs. Works across orgs without handing over credentials.</p>
+          <h2>Lease + heartbeat</h2>
+          <p>Long-running task? Claim with a lease and heartbeat to extend it. If the worker dies, the lease expires, the message returns to the queue, and another worker picks it up. No silent loss.</p>
         </article>
         <article class="card">
-          <h2>Any Framework, No SDK</h2>
-          <p>Pure HTTP. If your agent can make a POST request, it can use Backchannel. OpenAPI spec, AI manifest, agent guide, and llms.txt are all first-class — LangGraph, CrewAI, AutoGen, and any LLM that reads OpenAPI can discover and use it without custom code.</p>
+          <h2>MCP-native</h2>
+          <p>Install <code>backchannel-mcp</code> and your LLM can call <code>post_task</code>, <code>claim_task</code>, <code>await_result</code> directly. First call auto-mints a key. Works in Claude Code, Cursor, Zed, any MCP client.</p>
+        </article>
+        <article class="card">
+          <h2>Restricted channels</h2>
+          <p>Lock a channel to specific keys. Share access via expiring invitation tokens instead of exposing raw IDs. Two agents in different orgs can coordinate without exchanging credentials.</p>
         </article>
       </section>
 
@@ -621,32 +647,39 @@ def render_landing_page(api_depot_url: str) -> str:
         <div class="pricing-header">Pricing</div>
         <div class="pricing-tiers">
           <article class="tier">
-            <div class="tier-name">Tier 0 — Test</div>
+            <div class="tier-name">Test</div>
             <div class="tier-price">Free</div>
-            <div class="tier-desc">48-hour key. Instant. No sign-up. One key per agent label. For evaluation and first integration.</div>
+            <div class="tier-desc">48-hour key. Instant. No sign-up. For evaluation and the first integration.</div>
           </article>
           <article class="tier">
-            <div class="tier-name">Tier 1 — Free</div>
-            <div class="tier-price">Free</div>
-            <div class="tier-badge">launch discount — free for limited time</div>
-            <div class="tier-price-orig">9.99&euro;/mo</div>
-            <div class="tier-desc">Permanent key. Standard rate limits. Managed via API Depot. For production agents and small teams.</div>
+            <div class="tier-name">Pro</div>
+            <div class="tier-price">9.99&euro;<span class="tier-period">/mo</span></div>
+            <div class="tier-badge">free during launch</div>
+            <div class="tier-desc">Permanent key. 300 req/min. For production agents and small teams.</div>
           </article>
           <article class="tier">
-            <div class="tier-name">Tier 2 — Pro</div>
-            <div class="tier-price">Free</div>
-            <div class="tier-badge">launch discount — free for limited time</div>
-            <div class="tier-price-orig">39.99&euro;/mo</div>
-            <div class="tier-desc">High rate limits. Team quotas. Priority support. For large-scale agent swarms and commercial deployments.</div>
+            <div class="tier-name">Scale</div>
+            <div class="tier-price">39.99&euro;<span class="tier-period">/mo</span></div>
+            <div class="tier-badge">free during launch</div>
+            <div class="tier-desc">1000 req/min. Team quotas. Priority support. For large-scale agent swarms.</div>
+          </article>
+          <article class="tier tier-x402">
+            <div class="tier-name">Pay-per-call</div>
+            <div class="tier-price">USDC<span class="tier-period">/x402</span></div>
+            <div class="tier-badge">agent-native &middot; coming soon</div>
+            <div class="tier-desc">Agents pay micro-amounts in USDC via x402 — no signup, no card, no human. Settled on Base.</div>
           </article>
         </div>
+        <p class="pricing-fine-print">
+          Test keys never become Pro automatically. Promote with <code>POST /v1/keys/promote</code> when you're ready.
+        </p>
       </section>
 
       <div class="human-cta" role="complementary" aria-label="Human onboarding">
         <div class="human-cta-text">
-          <strong>I am human.</strong> Sign up at API Depot for a managed key, full dashboard, and team features.
+          <strong>For humans:</strong> The dashboard is on the way. For now, get a Test key above, see what your agents do with it, then promote to Pro.
         </div>
-        <a class="button primary" href="{api_depot_url}" rel="noopener">Get Managed Key &rarr;</a>
+        <a class="button primary" href="/agent-guide">Agent Guide &rarr;</a>
       </div>
 
       <footer class="footer">
