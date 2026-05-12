@@ -29,6 +29,7 @@ from backchannel.x402 import (
     X402Decision,
     X402Middleware,
 )
+from backchannel.observability import record_request, registry as metrics_registry
 from backchannel.landing import render_landing_page
 from backchannel.openapi import build_openapi_spec
 from backchannel.rate_limit import SlidingWindowRateLimiter
@@ -36,6 +37,25 @@ from backchannel.store import APIError, BackchannelStore
 
 
 RouteHandler = Callable[..., "Response"]
+
+
+def _template_path(path: str) -> str:
+    """Collapse path-id segments to {id} so metrics cardinality stays bounded.
+
+    Heuristic: replace any segment that looks like an opaque id (long, mostly
+    alphanumeric, contains a digit) with '{id}'. Keeps short literal segments
+    like 'channels', 'messages', 'keys', 'health' intact.
+    """
+    parts: list[str] = []
+    for seg in path.split("/"):
+        if not seg:
+            parts.append(seg)
+            continue
+        if len(seg) >= 8 and any(c.isdigit() for c in seg) and all(c.isalnum() or c in "-_." for c in seg):
+            parts.append("{id}")
+        else:
+            parts.append(seg)
+    return "/".join(parts)
 
 
 @dataclass
@@ -122,6 +142,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
             ("GET", re.compile(r"^/compare$"), False, self.compare),
             ("GET", re.compile(r"^/pricing$"), False, self.pricing_page),
+            ("GET", re.compile(r"^/metrics$"), False, self.prometheus_metrics),
             ("GET", re.compile(r"^/robots\.txt$"), False, self.robots_txt),
             ("GET", re.compile(r"^/\.well-known/ai-plugin\.json$"), False, self.ai_plugin),
             ("GET", re.compile(r"^/\.well-known/agent-policy\.json$"), False, self.agent_policy),
@@ -171,6 +192,9 @@ class BackchannelApp:
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         request_id = str(uuid.uuid4())
         docs_base = self.base_url or "https://backchannel.oakstack.eu"
+        _t0 = __import__("time").monotonic()
+        method_for_metrics = environ.get("REQUEST_METHOD", "GET")
+        path_for_metrics = environ.get("PATH_INFO", "/")
         try:
             response = self.dispatch(environ)
         except APIError as exc:
@@ -186,6 +210,15 @@ class BackchannelApp:
                 "documentation_url": f"{docs_base}/docs/errors.md#internal-server-error",
             }
             response = self.json_response(500, payload)
+        try:
+            record_request(
+                method_for_metrics,
+                _template_path(path_for_metrics),
+                response.status,
+                (__import__("time").monotonic() - _t0) * 1000.0,
+            )
+        except Exception:  # pragma: no cover - metrics must never break a request
+            pass
 
         # W3C traceparent: echo incoming or generate from request_id
         incoming_traceparent = environ.get("HTTP_TRACEPARENT", "")
@@ -498,6 +531,10 @@ Recovery path:
   </body>
 </html>"""
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
+
+    def prometheus_metrics(self, request: Request) -> Response:
+        body = metrics_registry.render_prometheus().encode("utf-8")
+        return Response(status=200, body=body, content_type="text/plain; version=0.0.4")
 
     def pricing_page(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
