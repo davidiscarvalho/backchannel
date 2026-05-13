@@ -175,6 +175,9 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/tasks/broadcast$"), True, self.task_broadcast),
             ("POST", re.compile(r"^/v1/tasks/claim-and-ack$"), True, self.task_claim_and_ack),
             ("POST", re.compile(r"^/v1/tasks/create-claimable-session$"), True, self.task_create_claimable_session),
+            ("POST", re.compile(r"^/v1/tasks/post-with-result$"), True, self.task_post_with_result),
+            ("POST", re.compile(r"^/v1/tasks/(?P<message_id>[^/]+)/result$"), True, self.task_publish_result),
+            ("GET", re.compile(r"^/v1/tasks/(?P<message_id>[^/]+)/result$"), True, self.task_await_result),
             ("GET", re.compile(r"^/v1/pricing/estimate$"), False, self.pricing_estimate),
             ("GET", re.compile(r"^/v1/sessions$"), True, self.list_sessions),
             ("POST", re.compile(r"^/v1/sessions$"), True, self.create_session),
@@ -1390,6 +1393,119 @@ is not accessible.
             team_id=request.auth.team_id,
         )
         return self.json_response(201, {"channel": channel, "invitation": invitation})
+
+    # --- result-channel primitive (B2) -------------------------------
+
+    def _result_channel_name_for(self, message_id: str) -> str:
+        return f"result-of-{message_id}"
+
+    def task_post_with_result(self, request: Request) -> Response:
+        """Post a task on a claimable channel AND create a paired result
+        broadcast channel. The producer can later GET /v1/tasks/{id}/result
+        to await; the consumer POSTs to /v1/tasks/{id}/result to publish.
+
+        This formalizes the convention the demos/* directory uses.
+        """
+        body = request.json()
+        channel = body.get("channel")
+        content = body.get("content", "")
+        if not channel:
+            raise APIError(422, "missing_field", "'channel' is required")
+        # Always create the work channel as a fresh claimable channel. The
+        # 'channel' arg is a logical name; the actual id is what we use for
+        # all subsequent ops.
+        work_channel = self.store.create_channel(
+            {"name": channel, "mode": "claimable"},
+            owner_id=request.auth.owner_id,
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        work_channel_id = work_channel["id"]
+        envelope = self.store.create_message(
+            work_channel_id,
+            {
+                "content": content,
+                "actor_label": body.get("actor_label"),
+                "metadata": body.get("metadata", {}),
+            },
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        message = envelope.message
+        message_id = message["id"]
+        result_channel_name = self._result_channel_name_for(message_id)
+        result_channel = self.store.create_channel(
+            {"name": result_channel_name, "mode": "broadcast"},
+            owner_id=request.auth.owner_id,
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        # Store the result channel id in the message metadata? Better: keep
+        # a deterministic alias so the await/publish endpoints can resolve.
+        self.store.create_channel_alias(
+            result_channel["id"],
+            {"alias": result_channel_name},
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        return self.json_response(
+            201,
+            {
+                "message": message,
+                "channel": work_channel_id,
+                "result_channel": result_channel_name,
+                "result_url": f"/v1/tasks/{message_id}/result",
+            },
+        )
+
+    def task_publish_result(self, request: Request, message_id: str) -> Response:
+        """The consumer (claimer) posts the result of a task on the paired
+        broadcast channel. The producer's await_result will receive it."""
+        body = request.json()
+        result_channel = self._result_channel_name_for(message_id)
+        envelope = self.store.create_message(
+            result_channel,
+            {
+                "content": body.get("content", ""),
+                "actor_label": body.get("actor_label"),
+                "metadata": {**body.get("metadata", {}), "task_id": message_id},
+            },
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        message = envelope.message
+        return self.json_response(201, {"result_channel": result_channel, "message": message})
+
+    def task_await_result(self, request: Request, message_id: str) -> Response:
+        """Read the first result posted on the paired result channel.
+        Non-blocking: returns 404 if no result is published yet. Callers
+        poll with backoff (or use the MCP await_result tool which polls
+        for them)."""
+        result_channel = self._result_channel_name_for(message_id)
+        try:
+            page = self.store.list_messages(
+                result_channel,
+                None,
+                1,
+                key_id=request.auth.key_id,
+                team_id=request.auth.team_id,
+            )
+        except APIError as exc:
+            if exc.status == 404:
+                raise APIError(
+                    404,
+                    "result_not_ready",
+                    "No result has been published for this task yet. Poll again or use POST /v1/tasks/<id>/result from the consumer side.",
+                )
+            raise
+        data = page.get("data", [])
+        if not data:
+            raise APIError(
+                404,
+                "result_not_ready",
+                "No result has been published for this task yet.",
+            )
+        return self.json_response(200, {"task_id": message_id, "result": data[0]})
 
     def pricing_estimate(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
