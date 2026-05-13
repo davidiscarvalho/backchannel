@@ -173,6 +173,9 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/keys/x402$"), False, self.issue_key_x402),
             ("POST", re.compile(r"^/v1/keys/promote$"), True, self.promote_key),
             ("POST", re.compile(r"^/v1/tasks/broadcast$"), True, self.task_broadcast),
+            ("POST", re.compile(r"^/v1/tasks/post$"), True, self.task_post),
+            ("POST", re.compile(r"^/v1/tasks/claim$"), True, self.task_claim_verb),
+            ("POST", re.compile(r"^/v1/tasks/subscribe$"), True, self.task_subscribe),
             ("POST", re.compile(r"^/v1/tasks/claim-and-ack$"), True, self.task_claim_and_ack),
             ("POST", re.compile(r"^/v1/tasks/create-claimable-session$"), True, self.task_create_claimable_session),
             ("POST", re.compile(r"^/v1/tasks/post-with-result$"), True, self.task_post_with_result),
@@ -1347,6 +1350,94 @@ is not accessible.
             detail={"email": email, "from_tier": 0, "to_tier": 1},
         )
         return self.json_response(200, {"key": new_raw_key, "key_id": new_key_id, "tier": 1, "expires_at": None})
+
+    # --- agent-verb route aliases (B1) -------------------------------
+
+    def task_post(self, request: Request) -> Response:
+        """Hand a task to one consumer on a claimable channel. Creates the
+        channel on the fly if missing. The simpler verb-style equivalent
+        of POST /v1/channels/{id}/messages on a claimable channel."""
+        body = request.json()
+        channel = body.get("channel")
+        if not channel:
+            raise APIError(422, "missing_field", "'channel' is required")
+        # Create the work channel (idempotent — caller may have created already).
+        try:
+            ch = self.store.create_channel(
+                {"name": channel, "mode": "claimable"},
+                owner_id=request.auth.owner_id,
+                key_id=request.auth.key_id,
+                team_id=request.auth.team_id,
+            )
+            channel_id = ch["id"]
+        except APIError as exc:
+            if exc.status != 409:
+                raise
+            channel_id = channel
+        envelope = self.store.create_message(
+            channel_id,
+            {
+                "content": body.get("content", ""),
+                "actor_label": body.get("actor_label"),
+                "metadata": body.get("metadata", {}),
+            },
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        return self.json_response(
+            201,
+            {
+                "message": envelope.message,
+                "channel": channel_id,
+                "next_cursor": envelope.cursor,
+            },
+        )
+
+    def task_claim_verb(self, request: Request) -> Response:
+        """Drain a channel and atomically claim the next unclaimed message.
+        Convenience verb for: list_messages → pick first → claim → return.
+        Returns {claimed: null} if nothing available, so callers don't have
+        to branch on 409."""
+        body = request.json()
+        channel = body.get("channel")
+        actor = body.get("actor")
+        if not channel:
+            raise APIError(422, "missing_field", "'channel' is required")
+        if not actor:
+            raise APIError(422, "missing_field", "'actor' is required (use POST /v1/actors first if needed)")
+        page = self.store.list_messages(
+            channel, None, 20,
+            key_id=request.auth.key_id, team_id=request.auth.team_id,
+            status="unclaimed",
+        )
+        for msg in page.get("data", []):
+            try:
+                claim_result = self.store.claim_message(
+                    msg["id"], {"actor": actor, "metadata": body.get("metadata", {})},
+                    key_id=request.auth.key_id, team_id=request.auth.team_id,
+                )
+                if claim_result["status"] == "claimed":
+                    return self.json_response(200, {"claimed": claim_result["message"]})
+            except APIError as exc:
+                if exc.status == 409:
+                    continue
+                raise
+        return self.json_response(200, {"claimed": None, "note": "no unclaimed messages available"})
+
+    def task_subscribe(self, request: Request) -> Response:
+        """Read recent messages from a channel since a cursor. Verb-style
+        alias for GET /v1/channels/{id}/messages."""
+        body = request.json()
+        channel = body.get("channel")
+        if not channel:
+            raise APIError(422, "missing_field", "'channel' is required")
+        since = body.get("since")
+        limit = int(body.get("limit", 50))
+        page = self.store.list_messages(
+            channel, since, limit,
+            key_id=request.auth.key_id, team_id=request.auth.team_id,
+        )
+        return self.json_response(200, page)
 
     def task_broadcast(self, request: Request) -> Response:
         body = request.json()
