@@ -192,6 +192,7 @@ class BackchannelApp:
             ("PUT", re.compile(r"^/v1/keys/me/scopes$"), True, self.set_key_scopes),
             ("GET", re.compile(r"^/account/usage$"), True, self.account_usage),
             ("GET", re.compile(r"^/status$"), False, self.status),
+            ("GET", re.compile(r"^/status\.html$"), False, self.status_page),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/metrics$"), True, self.channel_metrics),
             ("GET", re.compile(r"^/v1/security/audit$"), True, self.security_audit),
         ]
@@ -1732,6 +1733,90 @@ is not accessible.
             "sla_url": f"{base}/docs/sla.md",
             "health_url": f"{base}/health",
         })
+
+    def status_page(self, request: Request) -> Response:
+        """Human-readable status page. Probes the DB + last-cleanup-run as a
+        liveness signal. No external monitoring dependency."""
+        import time as _time
+        base = self.base_url or "https://backchannel.oakstack.eu"
+        # Liveness probe — same query /health uses.
+        db_ok = True
+        db_latency_ms: float | None = None
+        try:
+            t0 = _time.monotonic()
+            with self.store.connect() as conn:
+                conn.execute("SELECT 1")
+            db_latency_ms = round((_time.monotonic() - t0) * 1000.0, 2)
+        except Exception:
+            db_ok = False
+        last_cleanup = None
+        try:
+            runs = self.store.list_audit_runs(limit=1)
+            if runs:
+                last_cleanup = runs[0].get("started_at")
+        except Exception:
+            pass
+        overall = "Operational" if db_ok else "Degraded"
+        color = "#58ff7d" if db_ok else "#ffb347"
+        body = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backchannel — status</title>
+  <style>
+    body {{ font-family: 'IBM Plex Mono', monospace; background: #020402; color: #d6ffd8;
+            margin: 0; padding: 40px 20px; line-height: 1.5; }}
+    .wrap {{ max-width: 720px; margin: 0 auto; }}
+    .pill {{ display: inline-block; padding: 8px 16px; border-radius: 999px;
+              background: rgba(88,255,125,0.1); border: 1px solid {color};
+              color: {color}; font-weight: 700; letter-spacing: 0.04em; }}
+    h1 {{ font-size: 2rem; margin: 24px 0 0; letter-spacing: -0.02em; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 32px;
+              border: 1px solid rgba(84,255,138,0.28); }}
+    td, th {{ padding: 12px 14px; text-align: left;
+                border-bottom: 1px solid rgba(84,255,138,0.18); }}
+    th {{ color: #58ff7d; background: rgba(88,255,125,0.05); }}
+    .ok {{ color: #58ff7d; }} .down {{ color: #ffb347; }}
+    .muted {{ color: #8bcf90; font-size: 0.85rem; }}
+    a {{ color: #58ff7d; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="muted"><a href="/">← Backchannel</a></p>
+    <span class="pill">{overall}</span>
+    <h1>Service status</h1>
+    <p class="muted">Live probe — refresh for a fresh check.<br>
+       Updated: {self.store.now().isoformat()}</p>
+    <table>
+      <thead><tr><th>Component</th><th>State</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>HTTP API</td>
+            <td class="ok">Operational</td>
+            <td>responding to this request</td></tr>
+        <tr><td>Database (SQLite)</td>
+            <td class="{'ok' if db_ok else 'down'}">{'Operational' if db_ok else 'Degraded'}</td>
+            <td>{f"SELECT 1 in {db_latency_ms} ms" if db_latency_ms is not None else "DB unreachable"}</td></tr>
+        <tr><td>Cleanup worker</td>
+            <td class="{'ok' if last_cleanup else 'muted'}">
+              {'Operational' if last_cleanup else 'No runs yet'}
+            </td>
+            <td>{f"last run: {last_cleanup}" if last_cleanup else "the worker container fires this; safe before first cycle"}</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="margin-top:32px">
+      Machine-readable: <a href="/status">/status</a> · Liveness: <a href="/health">/health</a> ·
+      Metrics: <a href="/metrics">/metrics</a> · SLA: <a href="/docs/sla.md">/docs/sla.md</a>
+    </p>
+    <p class="muted">
+      Report incidents to <code>security@oakstack.eu</code>.
+    </p>
+  </div>
+</body>
+</html>
+"""
+        return Response(status=200, body=body.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def channel_metrics(self, request: Request, identifier: str) -> Response:
         auth = request.auth
