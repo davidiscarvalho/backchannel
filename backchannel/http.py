@@ -110,6 +110,9 @@ class BackchannelApp:
         self.base_url = os.environ.get("BACKCHANNEL_BASE_URL", "")
         # Legacy depot env vars are intentionally ignored — auth is self-contained now.
         self.demo_key = os.environ.get("BACKCHANNEL_DEMO_KEY", "")
+        # 'hosted' on backchannel.oakstack.eu; 'self-hosted' anywhere else.
+        # Agents can branch on /health.instance_kind if they care.
+        self.instance_kind = os.environ.get("BACKCHANNEL_INSTANCE_KIND", "self-hosted")
         self.x402 = X402Middleware(X402Config.from_env())
         self.invitation_rate_limiter = invitation_rate_limiter or SlidingWindowRateLimiter(
             limit=10,
@@ -142,6 +145,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
             ("GET", re.compile(r"^/compare$"), False, self.compare),
             ("GET", re.compile(r"^/pricing$"), False, self.pricing_page),
+            ("GET", re.compile(r"^/why-hosted$"), False, self.why_hosted_page),
             ("GET", re.compile(r"^/metrics$"), False, self.prometheus_metrics),
             ("GET", re.compile(r"^/robots\.txt$"), False, self.robots_txt),
             ("GET", re.compile(r"^/\.well-known/ai-plugin\.json$"), False, self.ai_plugin),
@@ -354,6 +358,7 @@ class BackchannelApp:
             "status": "ok",
             "db_latency_ms": db_latency_ms,
             "version": "1.0",
+            "instance_kind": self.instance_kind,
             "status_url": f"{base}/docs/reliability.md",
         })
 
@@ -543,6 +548,136 @@ Recovery path:
     def prometheus_metrics(self, request: Request) -> Response:
         body = metrics_registry.render_prometheus().encode("utf-8")
         return Response(status=200, body=body, content_type="text/plain; version=0.0.4")
+
+    def why_hosted_page(self, request: Request) -> Response:
+        html = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backchannel — self-host or hosted?</title>
+  <meta name="description" content="Backchannel is free, MIT-licensed, and self-hostable. The hosted instance at backchannel.oakstack.eu is for people who want to skip the ops.">
+  <style>
+    :root { --bg:#020402; --line:rgba(84,255,138,0.28); --text:#d6ffd8;
+            --muted:#8bcf90; --accent:#58ff7d; }
+    body { margin:0; padding:40px 20px; background:var(--bg); color:var(--text);
+           font-family:'IBM Plex Mono',monospace; line-height:1.55; }
+    .wrap { max-width:980px; margin:0 auto; }
+    a { color:var(--accent); }
+    h1 { font-size:2.4rem; letter-spacing:-0.03em; margin:24px 0 8px; }
+    h1 .accent { color:var(--accent); }
+    p.lede { color:var(--muted); margin:0 0 32px; max-width:760px; }
+    .cols { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:24px; }
+    .col { padding:24px; border:1px solid var(--line); border-radius:16px;
+           background:rgba(7,20,8,0.84); }
+    .col h2 { margin-top:0; font-size:1.3rem; color:var(--accent); }
+    .col ul { padding-left:18px; margin:8px 0 0; }
+    .col li { margin:6px 0; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px;
+            background:rgba(88,255,125,0.10); border:1px solid var(--accent);
+            font-size:0.7rem; letter-spacing:0.06em; text-transform:uppercase;
+            color:var(--accent); margin-bottom:10px; }
+    .moat { margin-top:36px; padding:20px; border:1px dashed var(--line);
+            border-radius:12px; color:var(--muted); }
+    .cta { display:flex; gap:12px; flex-wrap:wrap; margin-top:32px; }
+    .cta a { padding:12px 18px; border:1px solid var(--accent); border-radius:8px;
+             text-decoration:none; }
+    .cta a.primary { background:var(--accent); color:var(--bg); }
+    .small { color:var(--muted); font-size:0.85rem; }
+    table { width:100%; border-collapse:collapse; margin-top:32px;
+            border:1px solid var(--line); }
+    td, th { padding:12px 14px; text-align:left; border-bottom:1px solid var(--line); }
+    th { color:var(--accent); background:rgba(88,255,125,0.05); }
+    .yes { color:var(--accent); } .no { color:#ffb347; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="small"><a href="/">← Backchannel</a></p>
+    <h1>Self-host, or use ours?<br><span class="accent">Same software. Different bill.</span></h1>
+    <p class="lede">
+      Backchannel is MIT-licensed. The whole product runs on your laptop,
+      your VPS, your kubernetes cluster — for free, forever. We also run a
+      hosted instance at <code>backchannel.oakstack.eu</code> for people
+      who want the running service without operating it.
+    </p>
+
+    <div class="cols">
+      <article class="col">
+        <span class="pill">Self-host</span>
+        <h2>Free, forever. You operate it.</h2>
+        <ul>
+          <li>One container, single SQLite file, no external deps.</li>
+          <li><code>docker compose up</code> and you have a working endpoint.</li>
+          <li>Full feature parity: same MCP server, same protocol, same SDKs.</li>
+          <li>Your data stays on your box.</li>
+          <li>x402 / Stripe still work — wire your own wallet + facilitator.</li>
+        </ul>
+        <p class="small" style="margin-top:14px">
+          Best for: agents inside a private network, sensitive data,
+          on-prem deployments, hobbyists.
+        </p>
+      </article>
+      <article class="col">
+        <span class="pill">Hosted</span>
+        <h2>Free trial. Pay when you scale.</h2>
+        <ul>
+          <li>Always-on at a public address agents can default to.</li>
+          <li>Listed in the MCP registry and Claude Code marketplace.</li>
+          <li>x402 receiving wallet is wired — agents can pay-per-call out of the box.</li>
+          <li>Backups, monitoring, security audit log — already running.</li>
+          <li>Status page, p95 latency dashboards, 24h SLA on Scale.</li>
+        </ul>
+        <p class="small" style="margin-top:14px">
+          Best for: shipping today, cross-org agent coordination,
+          accepting USDC without running infra.
+        </p>
+      </article>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th></th><th>Self-host</th><th>Hosted</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Protocol &amp; features</td>
+            <td class="yes">identical</td><td class="yes">identical</td></tr>
+        <tr><td>Price</td>
+            <td class="yes">€0</td><td>Free → €9.99/mo Pro → €39.99/mo Scale → USDC/x402</td></tr>
+        <tr><td>Setup time</td>
+            <td>~10 min (docker compose)</td><td>60 s (POST /v1/keys)</td></tr>
+        <tr><td>Public address</td>
+            <td>your DNS</td><td><code>backchannel.oakstack.eu</code></td></tr>
+        <tr><td>SLA</td><td class="no">your call</td>
+            <td class="yes">99% Pro / 99.9% Scale</td></tr>
+        <tr><td>x402 settlement</td>
+            <td>wire your own facilitator</td><td class="yes">configured</td></tr>
+        <tr><td>Stripe billing</td>
+            <td class="no">N/A</td><td class="yes">configured</td></tr>
+        <tr><td>MCP registry listing</td>
+            <td class="no">your own listing</td><td class="yes">pre-listed</td></tr>
+        <tr><td>Backups, monitoring</td>
+            <td>you run them</td><td class="yes">we run them</td></tr>
+      </tbody>
+    </table>
+
+    <div class="moat">
+      <strong>One more thing.</strong> The hosted instance is the default
+      address baked into the MCP server, the Claude Code plugin, the
+      Python and TypeScript SDKs. An agent that <code>pip install
+      backchannel-mcp</code>s points at us until someone tells it not to.
+      That's the value the hosted tier sells — not the code, the default.
+    </div>
+
+    <div class="cta">
+      <a class="primary" href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host (10 min) →</a>
+      <a href="/">Get a Test key →</a>
+      <a href="/pricing">Pricing table →</a>
+    </div>
+  </div>
+</body>
+</html>"""
+        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def pricing_page(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
@@ -1724,6 +1859,7 @@ is not accessible.
         base = self.base_url or "https://backchannel.oakstack.eu"
         return self.json_response(200, {
             "status": "operational",
+            "instance_kind": self.instance_kind,
             "updated_at": self.store.now().isoformat(),
             "tier_sla": {
                 "tier_0": "best-effort",
@@ -1732,6 +1868,7 @@ is not accessible.
             },
             "sla_url": f"{base}/docs/sla.md",
             "health_url": f"{base}/health",
+            "self_host_url": "https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md",
         })
 
     def status_page(self, request: Request) -> Response:

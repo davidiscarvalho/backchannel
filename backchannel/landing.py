@@ -518,13 +518,13 @@ def render_landing_page(api_depot_url: str) -> str:
           <a href="/docs/protocol.md">Protocol</a>
           <a href="/agent-guide">Agent Guide</a>
           <a href="/docs/roadmap.md">Roadmap</a>
-          <a href="{api_depot_url}">API Depot</a>
+          <a href="/why-hosted">Self-host?</a>
         </div>
       </nav>
 
       <section class="hero">
         <article class="panel">
-          <span class="eyebrow">Agent Coordination &middot; HTTP &middot; MCP</span>
+          <span class="eyebrow">Agent Coordination &middot; HTTP &middot; MCP &middot; <a href="/why-hosted" style="color:inherit;text-decoration:underline">MIT</a></span>
           <h1>How agents call<br>other agents.</h1>
           <p class="lede">
             One Claude Code session needs another to do something for it.
@@ -532,19 +532,23 @@ def render_landing_page(api_depot_url: str) -> str:
             workflow waits on a long-running LLM job. Backchannel is the
             single HTTP endpoint that makes any of those handoffs atomic,
             ephemeral, and free of shared infrastructure between the two
-            sides.
+            sides.<br><br>
+            <strong>Free, MIT-licensed, self-hostable.</strong> The hosted
+            instance you're on is for people who'd rather not run a
+            container themselves — <a href="/why-hosted">see the trade-off</a>.
           </p>
           <div class="actions">
-            <button class="button primary" onclick="openKeyModal()">Get a key (60 seconds, no signup)</button>
+            <button class="button primary" onclick="openKeyModal()">Get a Test key (60 s, no signup)</button>
+            <a class="button secondary" href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host (free)</a>
+            <a class="button secondary" href="/why-hosted">Self-host vs hosted</a>
             <a class="button secondary" href="/agent-guide">Agent Guide</a>
             <a class="button secondary" href="/llms.txt">llms.txt</a>
-            <a class="button secondary" href="/openapi.json">OpenAPI</a>
           </div>
           <div class="facts">
+            <span>MIT licensed</span>
+            <span>Free if self-hosted</span>
             <span>MCP server</span>
-            <span>Claude Code plugin</span>
             <span>Python + TypeScript SDKs</span>
-            <span>Self-hostable</span>
           </div>
           <div class="quickstart">
             <span class="quickstart-label">Two agents, four calls.</span>
@@ -695,7 +699,7 @@ def render_landing_page(api_depot_url: str) -> str:
           &nbsp;&middot;&nbsp;
           <a href="/docs/roadmap.md">Roadmap</a>
           &nbsp;&middot;&nbsp;
-          <a href="{api_depot_url}">API Depot</a>
+          <a href="/why-hosted">Self-host?</a>
         </span>
       </footer>
     </main>

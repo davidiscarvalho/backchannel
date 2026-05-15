@@ -8,3 +8,21 @@ __pycache__/
 .pytest_cache/
 *.db
 *.sqlite3
+
+# virtualenvs
+.venv/
+venv/
+*.egg-info/
+
+# editor / harness
+.claude/
+
+# build artefacts
+dist/
+build/
+site/
+ui/node_modules/
+n8n_node/node_modules/
+sdk/typescript/node_modules/
+sdk/python/dist/
+mcp_server/dist/
