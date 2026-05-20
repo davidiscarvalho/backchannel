@@ -144,6 +144,15 @@ class HeartbeatTests(unittest.TestCase):
         self.assertTrue(posted)
         self.assertEqual(len(self._messages()), 2)
 
+    def test_heartbeat_skips_while_channel_is_paused(self) -> None:
+        # Auto-trip / kill switch pauses the channel; the bot must not fight it.
+        self.store.set_channel_paused(self.channel_id, True)
+        self.clock.advance(seconds=120)  # quiet AND paused
+        self.assertFalse(
+            self.store.post_sandbox_heartbeat_if_quiet(self.channel_id, self.bot_key_id)
+        )
+        self.assertEqual(self._messages(), [])
+
     def test_heartbeat_resets_the_quiet_window(self) -> None:
         # An empty channel gets one heartbeat; a second call right after is quiet for 0s.
         self.assertTrue(

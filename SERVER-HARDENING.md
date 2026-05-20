@@ -26,7 +26,10 @@ The app (commits `item70`/`item71`) already ships, in-process:
 - **Admin kill switch** — `POST /v1/admin/channels/{id}/pause` and `/resume`,
   guarded by `X-Admin-Token` == `BACKCHANNEL_ADMIN_TOKEN`.
 - **DB-size auto-trip** — the worker auto-pauses the sandbox channel if the
-  SQLite file exceeds `BACKCHANNEL_DB_SIZE_LIMIT_BYTES`.
+  SQLite file exceeds `BACKCHANNEL_DB_SIZE_LIMIT_BYTES`. It trips **once per
+  worker lifetime**: after the operator resumes the channel, auto-protection
+  does not re-arm until the worker restarts. Treat a trip as an incident, not
+  a self-healing event.
 
 **The gap this spec closes:** the per-key limit is useless against an attacker
 who mints unlimited keys, and the app's HTTP server is `wsgiref.simple_server`
