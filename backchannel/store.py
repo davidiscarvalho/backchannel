@@ -379,6 +379,7 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "webhook_secret", "TEXT")
             self._ensure_column(conn, "messages", "depends_on", "TEXT")
             self._ensure_column(conn, "channels", "ttl_seconds", "INTEGER NOT NULL DEFAULT 86400")
+            self._ensure_column(conn, "channels", "retention_days", "INTEGER NOT NULL DEFAULT 7")
             self._ensure_column(conn, "messages", "lease_token", "TEXT")
             self._ensure_column(conn, "messages", "lease_expires_at", "TEXT")
             conn.execute(
@@ -569,6 +570,13 @@ class BackchannelStore:
             ttl_seconds = raw_ttl
         else:
             ttl_seconds = 86400
+        raw_retention = payload.get("retention_days")
+        if raw_retention is not None:
+            if not isinstance(raw_retention, int) or isinstance(raw_retention, bool) or raw_retention < 1 or raw_retention > 365:
+                raise APIError(422, "invalid_retention_days", "retention_days must be an integer between 1 and 365")
+            retention_days = raw_retention
+        else:
+            retention_days = 7
         effective_team_id = team_id
         channel_id = str(uuid.uuid4())
         now = to_timestamp(self.now())
@@ -576,8 +584,8 @@ class BackchannelStore:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, retention_days, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -593,6 +601,7 @@ class BackchannelStore:
                     webhook_url,
                     webhook_secret,
                     ttl_seconds,
+                    retention_days,
                     now,
                     now,
                 ),
@@ -609,7 +618,7 @@ class BackchannelStore:
             return self._serialize_channel(conn, channel)
 
     def update_channel(self, identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels"}
+        allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels", "retention_days"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise APIError(422, "invalid_fields", "Unknown channel fields", {"fields": unknown})
@@ -635,6 +644,11 @@ class BackchannelStore:
                 updates.append(("metadata_schema", json.dumps(self._ensure_mapping(payload["metadata_schema"], "metadata_schema"), sort_keys=True)))
             if "pinned_message" in payload:
                 updates.append(("pinned_message", self._optional_string(payload.get("pinned_message"), allow_none=True)))
+            if "retention_days" in payload:
+                raw_retention = payload["retention_days"]
+                if not isinstance(raw_retention, int) or isinstance(raw_retention, bool) or raw_retention < 1 or raw_retention > 365:
+                    raise APIError(422, "invalid_retention_days", "retention_days must be an integer between 1 and 365")
+                updates.append(("retention_days", raw_retention))
 
             if updates:
                 clauses = ", ".join(f"{column} = ?" for column, _ in updates) + ", updated_at = ?"
@@ -800,6 +814,41 @@ class BackchannelStore:
 
             items = [self._serialize_message(conn, row) for row in rows]
             next_cursor = items[-1]["created_at"] if items else since
+            return {
+                "data": items,
+                "limit": page_size,
+                "next_cursor": next_cursor,
+            }
+
+    def list_channel_history(self, channel_identifier: str, cursor: str | None, limit: int | None, key_id: str, team_id: str | None = None) -> dict[str, Any]:
+        """Return archived (expired-then-cleaned-up) messages for a channel,
+        newest first. Rows live in audit_messages until the cleanup worker
+        purges them past the channel's retention_days window."""
+        page_size = 50 if limit is None else limit
+        if page_size < 1 or page_size > 100:
+            raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            params: list[Any] = [channel["id"]]
+            extra_clauses = ""
+            cursor_dt = parse_timestamp_or_none(cursor)
+            if cursor_dt is not None:
+                extra_clauses = " AND created_at < ?"
+                params.append(to_timestamp(cursor_dt))
+            params.append(page_size)
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM audit_messages
+                WHERE live_channel_id = ?
+                  {extra_clauses}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            items = [self._serialize_audit_message(row) for row in rows]
+            next_cursor = items[-1]["created_at"] if items else None
             return {
                 "data": items,
                 "limit": page_size,
@@ -1482,6 +1531,27 @@ class BackchannelStore:
         )
         conn.execute("DELETE FROM idempotency_cache WHERE expires_at <= ?", (now,))
 
+        # Purge archived messages past their channel's retention window.
+        # Without this the audit_messages archive grows forever; the
+        # /history endpoint exposes exactly this retention window.
+        purged_audit_messages = 0
+        archived_channel_ids = [
+            r["live_channel_id"]
+            for r in conn.execute(
+                "SELECT DISTINCT live_channel_id FROM audit_messages"
+            ).fetchall()
+        ]
+        for channel_id in archived_channel_ids:
+            channel_row = conn.execute(
+                "SELECT retention_days FROM channels WHERE id = ?", (channel_id,)
+            ).fetchone()
+            retention_days = channel_row["retention_days"] if channel_row is not None else 7
+            cutoff = to_timestamp(self.now() - timedelta(days=retention_days))
+            purged_audit_messages += conn.execute(
+                "DELETE FROM audit_messages WHERE live_channel_id = ? AND archived_at <= ?",
+                (channel_id, cutoff),
+            ).rowcount
+
         return {
             "archived_messages": archived_messages,
             "purged_messages": purged_messages,
@@ -1489,6 +1559,7 @@ class BackchannelStore:
             "purged_invitations": purged_invitations,
             "archived_channel_events": archived_channel_events,
             "purged_channel_events": purged_channel_events,
+            "purged_audit_messages": purged_audit_messages,
         }
 
     def _record_event(
@@ -1668,6 +1739,7 @@ class BackchannelStore:
             "metadata_schema": json.loads(row["metadata_schema"]),
             "pinned_message": row["pinned_message"],
             "ttl_seconds": row["ttl_seconds"] if "ttl_seconds" in row.keys() else 86400,
+            "retention_days": row["retention_days"] if "retention_days" in row.keys() else 7,
             "aliases": aliases,
             "related_channels": related,
             "created_at": row["created_at"],
@@ -1735,6 +1807,28 @@ class BackchannelStore:
             "claimed_at": row["claimed_at"],
             "acknowledged_by": acks,
             "active": parse_timestamp(row["expires_at"]) > self.now(),
+        }
+
+    def _serialize_audit_message(self, row: sqlite3.Row) -> dict[str, Any]:
+        actor = None
+        if row["actor_id"]:
+            actor = {"id": row["actor_id"], "name": row["actor_name"]}
+        claimed_by = None
+        if row["claimed_by_actor_id"]:
+            claimed_by = {"id": row["claimed_by_actor_id"], "name": row["claimed_by_actor_name"]}
+        return {
+            "id": row["live_message_id"],
+            "channel_id": row["live_channel_id"],
+            "actor": actor,
+            "actor_label": row["actor_label"],
+            "content": row["content"],
+            "metadata": json.loads(row["metadata"]),
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "claimed_by": claimed_by,
+            "claimed_at": row["claimed_at"],
+            "archived_at": row["archived_at"],
+            "active": False,
         }
 
     def _serialize_member(self, row: sqlite3.Row) -> dict[str, Any]:

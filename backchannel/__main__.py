@@ -78,6 +78,7 @@ def main() -> int:
                         f"purged_messages={summary['purged_messages']}",
                         f"archived_invitations={summary['archived_invitations']}",
                         f"purged_invitations={summary['purged_invitations']}",
+                        f"purged_audit_messages={summary['purged_audit_messages']}",
                     ]),
                     flush=True,
                 )
@@ -118,6 +119,7 @@ def main() -> int:
                     f"purged_messages={summary['purged_messages']}",
                     f"archived_invitations={summary['archived_invitations']}",
                     f"purged_invitations={summary['purged_invitations']}",
+                    f"purged_audit_messages={summary['purged_audit_messages']}",
                 ]
             )
         )

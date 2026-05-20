@@ -157,6 +157,7 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/invitations$"), True, self.create_channel_invitation),
             ("POST", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/messages$"), True, self.create_message),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/messages$"), True, self.list_messages),
+            ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/history$"), True, self.channel_history),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/members$"), True, self.list_channel_members),
             ("POST", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/members$"), True, self.add_channel_member),
             ("DELETE", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/members/(?P<member_key_id>[^/]+)$"), True, self.remove_channel_member),
@@ -933,6 +934,20 @@ is not accessible.
             response.extra_headers.append(("Deprecation", "true"))
             response.extra_headers.append(("Sunset", "2027-01-01"))
         return response
+
+    def channel_history(self, request: Request, identifier: str) -> Response:
+        self._require_scope(request.auth, "messages:read")
+        cursor = request.query_value("cursor")
+        limit = request.query_value("limit")
+        parsed_limit = None if limit is None else int(limit)
+        payload = self.store.list_channel_history(
+            identifier,
+            cursor=cursor,
+            limit=parsed_limit,
+            key_id=request.auth.key_id,
+            team_id=request.auth.team_id,
+        )
+        return self.json_response(200, payload)
 
     def list_channel_members(self, request: Request, identifier: str) -> Response:
         members = self.store.list_channel_members(identifier, key_id=request.auth.key_id, team_id=request.auth.team_id)
