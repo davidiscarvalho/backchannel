@@ -380,6 +380,11 @@ class BackchannelStore:
             self._ensure_column(conn, "messages", "depends_on", "TEXT")
             self._ensure_column(conn, "channels", "ttl_seconds", "INTEGER NOT NULL DEFAULT 86400")
             self._ensure_column(conn, "channels", "retention_days", "INTEGER NOT NULL DEFAULT 7")
+            # Abuse controls: cap stored messages (ring buffer), throttle
+            # writes per minute (keyless), and a pause/kill switch.
+            self._ensure_column(conn, "channels", "max_messages", "INTEGER")
+            self._ensure_column(conn, "channels", "max_writes_per_minute", "INTEGER")
+            self._ensure_column(conn, "channels", "paused", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "messages", "lease_token", "TEXT")
             self._ensure_column(conn, "messages", "lease_expires_at", "TEXT")
             conn.execute(
@@ -577,6 +582,8 @@ class BackchannelStore:
             retention_days = raw_retention
         else:
             retention_days = 7
+        max_messages = self._validate_optional_count(payload.get("max_messages"), "max_messages")
+        max_writes_per_minute = self._validate_optional_count(payload.get("max_writes_per_minute"), "max_writes_per_minute")
         effective_team_id = team_id
         channel_id = str(uuid.uuid4())
         now = to_timestamp(self.now())
@@ -584,8 +591,8 @@ class BackchannelStore:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, retention_days, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, retention_days, max_messages, max_writes_per_minute, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -602,6 +609,8 @@ class BackchannelStore:
                     webhook_secret,
                     ttl_seconds,
                     retention_days,
+                    max_messages,
+                    max_writes_per_minute,
                     now,
                     now,
                 ),
@@ -618,7 +627,7 @@ class BackchannelStore:
             return self._serialize_channel(conn, channel)
 
     def update_channel(self, identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels", "retention_days"}
+        allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels", "retention_days", "max_messages", "max_writes_per_minute", "paused"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise APIError(422, "invalid_fields", "Unknown channel fields", {"fields": unknown})
@@ -649,6 +658,15 @@ class BackchannelStore:
                 if not isinstance(raw_retention, int) or isinstance(raw_retention, bool) or raw_retention < 1 or raw_retention > 365:
                     raise APIError(422, "invalid_retention_days", "retention_days must be an integer between 1 and 365")
                 updates.append(("retention_days", raw_retention))
+            if "max_messages" in payload:
+                updates.append(("max_messages", self._validate_optional_count(payload["max_messages"], "max_messages")))
+            if "max_writes_per_minute" in payload:
+                updates.append(("max_writes_per_minute", self._validate_optional_count(payload["max_writes_per_minute"], "max_writes_per_minute")))
+            if "paused" in payload:
+                paused_value = payload["paused"]
+                if not isinstance(paused_value, bool):
+                    raise APIError(422, "invalid_paused", "paused must be a boolean")
+                updates.append(("paused", 1 if paused_value else 0))
 
             if updates:
                 clauses = ", ".join(f"{column} = ?" for column, _ in updates) + ", updated_at = ?"
@@ -724,6 +742,28 @@ class BackchannelStore:
 
         with self.connect() as conn:
             channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            # Abuse controls (see _init_db). Checked before any write work.
+            if "paused" in channel.keys() and channel["paused"]:
+                raise APIError(
+                    503,
+                    "channel_paused",
+                    "This channel is paused and not accepting new messages",
+                    {"retry_after": 30},
+                )
+            max_writes_per_minute = channel["max_writes_per_minute"] if "max_writes_per_minute" in channel.keys() else None
+            if max_writes_per_minute is not None:
+                window_start = to_timestamp(now - timedelta(seconds=60))
+                recent_writes = conn.execute(
+                    "SELECT COUNT(*) AS n FROM messages WHERE channel_id = ? AND created_at > ?",
+                    (channel["id"], window_start),
+                ).fetchone()["n"]
+                if recent_writes >= max_writes_per_minute:
+                    raise APIError(
+                        429,
+                        "channel_write_rate_exceeded",
+                        f"This channel accepts at most {max_writes_per_minute} messages per minute",
+                        {"retry_after": 60},
+                    )
             ttl_seconds = channel["ttl_seconds"] if "ttl_seconds" in channel.keys() else 86400
             expires_at = to_timestamp(now + timedelta(seconds=ttl_seconds))
             # Validate metadata against channel's metadata_schema
@@ -757,6 +797,25 @@ class BackchannelStore:
                     expires_at,
                 ),
             )
+            # Ring-buffer cap: keep only the newest max_messages. Trimmed
+            # messages are discarded outright, not archived to /history.
+            # Ordered by rowid (monotonic insertion order) so a burst of
+            # messages sharing a created_at timestamp still trims oldest-first.
+            max_messages = channel["max_messages"] if "max_messages" in channel.keys() else None
+            if max_messages is not None:
+                conn.execute(
+                    """
+                    DELETE FROM messages
+                    WHERE channel_id = ?
+                      AND rowid NOT IN (
+                        SELECT rowid FROM messages
+                        WHERE channel_id = ?
+                        ORDER BY rowid DESC
+                        LIMIT ?
+                      )
+                    """,
+                    (channel["id"], channel["id"], max_messages),
+                )
             conn.commit()
             message = self._get_message(conn, message_id)
             envelope = MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
@@ -1740,6 +1799,9 @@ class BackchannelStore:
             "pinned_message": row["pinned_message"],
             "ttl_seconds": row["ttl_seconds"] if "ttl_seconds" in row.keys() else 86400,
             "retention_days": row["retention_days"] if "retention_days" in row.keys() else 7,
+            "max_messages": row["max_messages"] if "max_messages" in row.keys() else None,
+            "max_writes_per_minute": row["max_writes_per_minute"] if "max_writes_per_minute" in row.keys() else None,
+            "paused": bool(row["paused"]) if "paused" in row.keys() else False,
             "aliases": aliases,
             "related_channels": related,
             "created_at": row["created_at"],
@@ -1934,6 +1996,19 @@ class BackchannelStore:
         }
         if column_name not in columns:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+    def _validate_optional_count(self, value: Any, field_name: str) -> int | None:
+        """Validate a nullable positive-integer channel limit. None means
+        'no limit'; otherwise it must be an int in [1, 1_000_000]."""
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 1_000_000:
+            raise APIError(
+                422,
+                f"invalid_{field_name}",
+                f"{field_name} must be an integer between 1 and 1000000, or null",
+            )
+        return value
 
     def _required_string(self, payload: dict[str, Any], field_name: str) -> str:
         if field_name not in payload:
