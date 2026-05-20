@@ -751,7 +751,7 @@ def render_landing_page(api_depot_url: str) -> str:
             result.innerHTML = '<div style="color:#5cff80;margin-bottom:8px;">&#10003; Key issued</div>'
               + '<div style="color:#aaa;margin-bottom:4px;">Copy and store it — it won\'t be shown again.</div>'
               + '<div style="background:#111;padding:8px;border-radius:6px;color:#e8ffe8;font-size:0.78rem;margin-top:8px;">' + r.data.key + '</div>'
-              + '<div style="color:#666;font-size:0.75rem;margin-top:8px;">Tier 0 &middot; Expires: ' + (r.data.expires_at || 'in 48h') + '</div>';
+              + '<div style="color:#666;font-size:0.75rem;margin-top:8px;">Permanent &amp; free &middot; rate limit: ' + r.data.rate_limit + ' / ' + r.data.rate_limit_window_seconds + 's</div>';
           }} else {{
             result.style.borderColor = '#7a2a2a';
             result.innerHTML = '<div style="color:#ff5c5c;">Error: ' + (r.data.message || JSON.stringify(r.data)) + '</div>';
