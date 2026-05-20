@@ -65,6 +65,34 @@ class SandboxProvisioningTests(unittest.TestCase):
         second = self.store.ensure_sandbox_channel(owner_key_id=bot_key_id)
         self.assertEqual(first, second)
 
+    def test_ensure_sandbox_channel_applies_abuse_limits(self) -> None:
+        bot_key_id = self.store.ensure_heartbeat_bot_key()
+        self.store.ensure_sandbox_channel(
+            owner_key_id=bot_key_id, ttl_seconds=600, max_messages=150, max_writes_per_minute=42
+        )
+        channel = self.store.get_channel(SANDBOX_CHANNEL_ALIAS, key_id=bot_key_id)
+        self.assertEqual(channel["ttl_seconds"], 600)
+        self.assertEqual(channel["max_messages"], 150)
+        self.assertEqual(channel["max_writes_per_minute"], 42)
+
+    def test_ensure_sandbox_channel_refreshes_limits_on_restart(self) -> None:
+        bot_key_id = self.store.ensure_heartbeat_bot_key()
+        self.store.ensure_sandbox_channel(owner_key_id=bot_key_id, max_messages=100)
+        # A later call (a worker restart with retuned env) updates the limits.
+        self.store.ensure_sandbox_channel(owner_key_id=bot_key_id, max_messages=500)
+        channel = self.store.get_channel(SANDBOX_CHANNEL_ALIAS, key_id=bot_key_id)
+        self.assertEqual(channel["max_messages"], 500)
+
+    def test_ensure_sandbox_channel_does_not_clear_pause_on_restart(self) -> None:
+        bot_key_id = self.store.ensure_heartbeat_bot_key()
+        channel_id = self.store.ensure_sandbox_channel(owner_key_id=bot_key_id)
+        self.store.set_channel_paused(channel_id, True)
+        # A worker restart re-runs ensure_sandbox_channel — the operator's
+        # kill switch must survive it.
+        self.store.ensure_sandbox_channel(owner_key_id=bot_key_id)
+        channel = self.store.get_channel(SANDBOX_CHANNEL_ALIAS, key_id=bot_key_id)
+        self.assertTrue(channel["paused"])
+
 
 class HeartbeatTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -106,6 +107,9 @@ class BackchannelApp:
         # 'hosted' on the public test instance; 'self-hosted' anywhere else.
         # Agents can branch on /health.instance_kind if they care.
         self.instance_kind = os.environ.get("BACKCHANNEL_INSTANCE_KIND", "self-hosted")
+        # Operator kill switch: when set, the /v1/admin/* endpoints accept
+        # an X-Admin-Token matching this value. Empty -> admin API disabled.
+        self.admin_token = os.environ.get("BACKCHANNEL_ADMIN_TOKEN", "")
         # Per-key request rate limit. The public test instance ships a low
         # default (10/hour) to keep it a sandbox, not a production backend —
         # self-hosters raise BACKCHANNEL_RATE_LIMIT / _WINDOW (0 = unlimited).
@@ -197,6 +201,8 @@ class BackchannelApp:
             ("GET", re.compile(r"^/status\.html$"), False, self.status_page),
             ("GET", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)/metrics$"), True, self.channel_metrics),
             ("GET", re.compile(r"^/v1/security/audit$"), True, self.security_audit),
+            ("POST", re.compile(r"^/v1/admin/channels/(?P<identifier>[^/]+)/pause$"), False, self.admin_pause_channel),
+            ("POST", re.compile(r"^/v1/admin/channels/(?P<identifier>[^/]+)/resume$"), False, self.admin_resume_channel),
         ]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
@@ -948,6 +954,33 @@ is not accessible.
             team_id=request.auth.team_id,
         )
         return self.json_response(200, payload)
+
+    def _require_admin(self, request: Request) -> None:
+        if not self.admin_token:
+            raise APIError(403, "admin_disabled", "Admin API is disabled. Set BACKCHANNEL_ADMIN_TOKEN to enable it.")
+        provided = request.headers.get("X-Admin-Token", "")
+        if not provided or not hmac.compare_digest(provided, self.admin_token):
+            raise APIError(401, "admin_unauthorized", "Missing or invalid X-Admin-Token")
+
+    def admin_pause_channel(self, request: Request, identifier: str) -> Response:
+        self._require_admin(request)
+        channel = self.store.set_channel_paused(identifier, True)
+        self.store.record_security_event(
+            event_type="channel.pause",
+            remote_addr=request.remote_addr,
+            detail={"channel_id": channel["id"], "name": channel["name"]},
+        )
+        return self.json_response(200, channel)
+
+    def admin_resume_channel(self, request: Request, identifier: str) -> Response:
+        self._require_admin(request)
+        channel = self.store.set_channel_paused(identifier, False)
+        self.store.record_security_event(
+            event_type="channel.resume",
+            remote_addr=request.remote_addr,
+            detail={"channel_id": channel["id"], "name": channel["name"]},
+        )
+        return self.json_response(200, channel)
 
     def list_channel_members(self, request: Request, identifier: str) -> Response:
         members = self.store.list_channel_members(identifier, key_id=request.auth.key_id, team_id=request.auth.team_id)

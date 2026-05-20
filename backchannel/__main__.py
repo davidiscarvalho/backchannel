@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import threading
@@ -32,6 +33,18 @@ def _install_signal_handlers() -> None:
             pass
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read an integer env var, falling back to default on missing/invalid."""
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backchannel service")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -59,10 +72,29 @@ def main() -> int:
         store = BackchannelStore(Path(args.db))
         print(f"Backchannel cleanup worker started (interval={args.interval}s)", flush=True)
         # Provision the public sandbox channel + its heartbeat bot. The bot
-        # key owns the channel so there are no synthetic identities.
+        # key owns the channel so there are no synthetic identities. The
+        # sandbox ships aggressive abuse-control limits (operator-tunable).
+        sandbox_ttl = _clamp(_env_int("BACKCHANNEL_SANDBOX_TTL_SECONDS", 600), 300, 2592000)
+        sandbox_max_messages = _clamp(_env_int("BACKCHANNEL_SANDBOX_MAX_MESSAGES", 200), 1, 1_000_000)
+        sandbox_max_writes = _clamp(_env_int("BACKCHANNEL_SANDBOX_MAX_WRITES_PER_MINUTE", 60), 1, 1_000_000)
         bot_key_id = store.ensure_heartbeat_bot_key()
-        sandbox_channel_id = store.ensure_sandbox_channel(owner_key_id=bot_key_id)
-        print(f"sandbox channel ready channel_id={sandbox_channel_id} bot={bot_key_id}", flush=True)
+        sandbox_channel_id = store.ensure_sandbox_channel(
+            owner_key_id=bot_key_id,
+            ttl_seconds=sandbox_ttl,
+            max_messages=sandbox_max_messages,
+            max_writes_per_minute=sandbox_max_writes,
+        )
+        print(
+            f"sandbox channel ready channel_id={sandbox_channel_id} bot={bot_key_id} "
+            f"ttl={sandbox_ttl}s max_messages={sandbox_max_messages} max_writes_per_minute={sandbox_max_writes}",
+            flush=True,
+        )
+        # Auto-trip: if the DB file outgrows this many bytes, pause the
+        # sandbox channel so an overnight flood cannot fill the disk
+        # unattended. 0 disables. Only ever pauses the sandbox channel.
+        db_size_limit = _env_int("BACKCHANNEL_DB_SIZE_LIMIT_BYTES", 1_073_741_824)
+        db_files = [args.db, f"{args.db}-wal", f"{args.db}-shm"]
+        auto_tripped = False
         # Heartbeat cadence is independent of the cleanup interval: the bot
         # must keep the sandbox channel fresh even when --interval is large.
         heartbeat_check_interval = 30.0
@@ -105,6 +137,21 @@ def main() -> int:
                             print("sandbox heartbeat posted", flush=True)
                     except Exception as exc:
                         print(f"sandbox heartbeat error: {exc}", flush=True)
+                    if db_size_limit > 0 and not auto_tripped:
+                        try:
+                            db_bytes = sum(
+                                os.path.getsize(p) for p in db_files if os.path.exists(p)
+                            )
+                            if db_bytes > db_size_limit:
+                                store.set_channel_paused(sandbox_channel_id, True)
+                                auto_tripped = True
+                                print(
+                                    f"AUTO-TRIP db_bytes={db_bytes} exceeds limit={db_size_limit} "
+                                    "— sandbox channel paused; resume via the admin API after investigating",
+                                    flush=True,
+                                )
+                        except Exception as exc:
+                            print(f"auto-trip check error: {exc}", flush=True)
         print("worker drained, exiting", flush=True)
         return 0
 

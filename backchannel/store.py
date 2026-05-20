@@ -2349,17 +2349,34 @@ class BackchannelStore:
         )
         return key_id
 
-    def ensure_sandbox_channel(self, owner_key_id: str) -> str:
+    def ensure_sandbox_channel(
+        self,
+        owner_key_id: str,
+        *,
+        ttl_seconds: int = 600,
+        max_messages: int = 200,
+        max_writes_per_minute: int = 60,
+    ) -> str:
         """Idempotently provision the public 'sandbox' broadcast channel and
         return its id. Owned by the heartbeat bot key so there are no
-        synthetic identities in channel ownership."""
+        synthetic identities in channel ownership. The abuse-control limits
+        are (re)applied on every call so an operator can retune them by
+        restarting the worker — but `paused` is never touched here, so an
+        operator's kill switch survives a restart."""
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT channel_id FROM channel_aliases WHERE alias = ?",
                 (SANDBOX_CHANNEL_ALIAS,),
             ).fetchone()
-            if row is not None:
-                return row["channel_id"]
+        if row is not None:
+            channel_id = row["channel_id"]
+            with self.connect() as conn:
+                conn.execute(
+                    "UPDATE channels SET ttl_seconds = ?, max_messages = ?, max_writes_per_minute = ?, updated_at = ? WHERE id = ?",
+                    (ttl_seconds, max_messages, max_writes_per_minute, to_timestamp(self.now()), channel_id),
+                )
+                conn.commit()
+            return channel_id
         try:
             channel = self.create_channel(
                 {
@@ -2367,6 +2384,9 @@ class BackchannelStore:
                     "mode": "broadcast",
                     "access": "open",
                     "description": "Public firehose — any agent can post and read here to test the Backchannel protocol.",
+                    "ttl_seconds": ttl_seconds,
+                    "max_messages": max_messages,
+                    "max_writes_per_minute": max_writes_per_minute,
                 },
                 owner_id="backchannel",
                 key_id=owner_key_id,
@@ -2387,10 +2407,30 @@ class BackchannelStore:
                     return row["channel_id"]
             raise
 
+    def set_channel_paused(self, identifier: str, paused: bool) -> dict[str, Any]:
+        """Pause or resume a channel, bypassing ownership checks. This is the
+        operator/admin kill switch — it resolves the channel without a key_id
+        so it works on channels the operator does not own (e.g. the sandbox,
+        owned by the discarded heartbeat-bot key)."""
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, identifier)
+            conn.execute(
+                "UPDATE channels SET paused = ?, updated_at = ? WHERE id = ?",
+                (1 if paused else 0, to_timestamp(self.now()), channel["id"]),
+            )
+            conn.commit()
+            return self._serialize_channel(conn, self._get_channel_by_id(conn, channel["id"]))
+
     def post_sandbox_heartbeat_if_quiet(self, channel_id: str, bot_key_id: str) -> bool:
         """Post a heartbeat message if the channel has had no new message in
-        the last SANDBOX_HEARTBEAT_QUIET_SECONDS. Returns True if it posted."""
+        the last SANDBOX_HEARTBEAT_QUIET_SECONDS. Returns True if it posted.
+        Skips silently while the channel is paused (kill switch / auto-trip)."""
         with self.connect() as conn:
+            channel = conn.execute(
+                "SELECT paused FROM channels WHERE id = ?", (channel_id,)
+            ).fetchone()
+            if channel is not None and channel["paused"]:
+                return False
             row = conn.execute(
                 "SELECT MAX(created_at) AS latest FROM messages WHERE channel_id = ?",
                 (channel_id,),
