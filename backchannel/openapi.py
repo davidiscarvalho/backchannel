@@ -14,6 +14,11 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "created_by_key_id": {"type": "string"},
             "metadata_schema": {"type": "object"},
             "pinned_message": {"type": ["string", "null"]},
+            "ttl_seconds": {"type": "integer", "description": "How long a message lives before it expires (300-2592000).", "example": 86400},
+            "retention_days": {"type": "integer", "description": "How long an expired message stays readable via GET /history before it is purged (1-365).", "example": 7},
+            "max_messages": {"type": ["integer", "null"], "description": "Ring-buffer cap: the channel keeps at most this many messages, dropping the oldest. null means unbounded."},
+            "max_writes_per_minute": {"type": ["integer", "null"], "description": "Keyless write throttle: messages per minute across all keys. Excess gets 429. null means no limit."},
+            "paused": {"type": "boolean", "description": "When true the channel rejects new messages with 503; reads still work."},
             "aliases": {"type": "array", "items": {"type": "string"}, "example": ["ops-alerts"]},
             "related_channels": {
                 "type": "array",
@@ -130,7 +135,6 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "error": {"type": "string", "example": "channel_access_denied", "description": "Machine-readable error code. Use this for branching logic."},
             "message": {"type": "string", "example": "You are not a member of this channel", "description": "Human-readable description of what went wrong."},
             "suggestion": {"type": "string", "description": "Optional hint for the next action to resolve the error. Present in 409 and 422 responses.", "example": "Use POST /v1/channels/{id}/invitations to get an invitation token, then resolve it with GET /v1/channel-invitations/{id}."},
-            "upgrade_url": {"type": "string", "description": "URL to upgrade or re-issue an expired or rate-limited key. Present in 401 and 410 responses for Tier 0 keys.", "example": "/v1/keys/promote"},
         },
     }
 
@@ -426,6 +430,49 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "parameters": [
                         {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
                         {"name": "since", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Return messages created after this timestamp (cursor)"},
+                        {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "OK",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "data": {"type": "array", "items": {"$ref": "#/components/schemas/Message"}},
+                                    "limit": {"type": "integer"},
+                                    "next_cursor": {"type": ["string", "null"], "format": "date-time"},
+                                },
+                            }}},
+                        },
+                        **errors(401, 403, 404, 422),
+                    },
+                },
+            },
+            "/v1/channels/{identifier}/history": {
+                "get": {
+                    "summary": "Read a channel's archived (expired) messages",
+                    "description": (
+                        "Returns messages that have expired off the live channel and been "
+                        "archived, newest first. A message is readable here for the channel's "
+                        "retention_days after it expires, then it is purged. Pass 'cursor' "
+                        "(the next_cursor from the previous page) to paginate."
+                    ),
+                    "operationId": "listChannelHistory",
+                    "security": auth_required,
+                    "tags": ["Messages"],
+                    **hints(
+                        operation_id="listChannelHistory",
+                        when_to_use=(
+                            "Use listChannelHistory to read messages that have already expired "
+                            "off the live channel — an audit trail within the channel's "
+                            "retention window. For live messages use listMessages."
+                        ),
+                        output_type="message_list",
+                        prompt="Show the archived messages from the 'deploy-jobs' channel.",
+                    ),
+                    "parameters": [
+                        {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "cursor", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Pass the next_cursor from the previous page to get older messages."},
                         {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
                     ],
                     "responses": {

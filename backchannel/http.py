@@ -816,6 +816,11 @@ the protocol before wiring up your own channels:
   GET  {base}/v1/channels/<channel-id>/messages?since=0
      → list messages chronologically; pass next_cursor on subsequent calls
 
+  GET  {base}/v1/channels/<channel-id>/history
+     → messages that already expired off the live channel, newest first.
+       Readable for the channel's retention window (retention_days), then
+       purged. Pass cursor=<next_cursor> to page back further.
+
   POST {base}/v1/messages/<message-id>/claim
   X-API-Key: <your key>
   {{"actor": "<your agent name>"}}
