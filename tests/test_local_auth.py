@@ -111,16 +111,14 @@ class LocalAuthTests(unittest.TestCase):
 
     # --- issue_key endpoint ---------------------------------------------
 
-    def test_issue_key_returns_tier0_with_48h_ttl(self) -> None:
+    def test_issue_key_is_permanent(self) -> None:
         status, payload = self.request("POST", "/v1/keys", {"agent_label": "worker-alpha"})
         self.assertEqual(status, 201, payload)
-        self.assertEqual(payload["tier"], 0)
         self.assertTrue(payload["key"].startswith("bck_"))
         self.assertIn(".", payload["key"])
-        # expires_at = now + 48h
-        expires = datetime.fromisoformat(payload["expires_at"])
-        delta = expires - self.clock.now()
-        self.assertAlmostEqual(delta.total_seconds(), 48 * 3600, delta=2)
+        # Keys are permanent now — no expiry, no tiers.
+        self.assertIsNone(payload["expires_at"])
+        self.assertIn("rate_limit", payload)
 
     def test_issue_key_label_reuse_returns_409(self) -> None:
         status1, _ = self.request("POST", "/v1/keys", {"agent_label": "worker-alpha"})
@@ -173,57 +171,10 @@ class LocalAuthTests(unittest.TestCase):
         _, secret = split_key(raw_key)
         self.assertNotIn(secret, row["key_hash"])
 
-    # --- promote -------------------------------------------------------
-
-    def test_promote_issues_new_tier1_key_and_revokes_old(self) -> None:
-        _, issued = self.request("POST", "/v1/keys", {"agent_label": "worker-alpha"})
-        tier0 = issued["key"]
-        # Bypass authenticator cache by spacing operations (cache is in-memory).
-        status, promoted = self.request(
-            "POST", "/v1/keys/promote", {"email": "alpha@example.com"}, api_key=tier0
-        )
-        self.assertEqual(status, 200, promoted)
-        self.assertEqual(promoted["tier"], 1)
-        self.assertIsNone(promoted["expires_at"])
-        self.assertNotEqual(promoted["key"], tier0)
-
-        # Old key is now inactive — invalidate cache + re-attempt
-        self.app.authenticator.invalidate_cache()
-        status, _ = self.request("GET", "/v1/keys/me", api_key=tier0)
-        self.assertEqual(status, 401)
-
-        # New key authenticates
-        status, me = self.request("GET", "/v1/keys/me", api_key=promoted["key"])
-        self.assertEqual(status, 200)
-        self.assertEqual(me["tier"], 1)
-
-    def test_promote_twice_returns_409(self) -> None:
-        _, issued = self.request("POST", "/v1/keys", {"agent_label": "worker-alpha"})
-        tier0 = issued["key"]
-        self.request("POST", "/v1/keys/promote", {"email": "a@b.c"}, api_key=tier0)
-        # Second promote with the same (now revoked) key — first 401
-        self.app.authenticator.invalidate_cache()
-        status, _ = self.request("POST", "/v1/keys/promote", {"email": "a@b.c"}, api_key=tier0)
-        self.assertEqual(status, 401)
-
-    # --- expiry --------------------------------------------------------
-
-    def test_expired_tier0_key_returns_410(self) -> None:
-        _, issued = self.request("POST", "/v1/keys", {"agent_label": "worker-alpha"})
-        raw_key = issued["key"]
-        # Advance past 48h
-        self.clock.advance(hours=49)
-        self.app.authenticator.invalidate_cache()
-        status, body = self.request("GET", "/v1/keys/me", api_key=raw_key)
-        self.assertEqual(status, 410)
-        self.assertEqual(body["error"], "key_expired")
-        self.assertIn("upgrade_url", body)
-
     # --- no depot env required -----------------------------------------
 
     def test_no_depot_env_variables_required(self) -> None:
-        # The app constructed in setUp uses no BACKCHANNEL_DEPOT_* envs.
-        # Re-issue and re-auth still works.
+        # The app constructed in setUp uses no external auth service.
         status, _ = self.request("POST", "/v1/keys", {"agent_label": "ephemeral"})
         self.assertEqual(status, 201)
 

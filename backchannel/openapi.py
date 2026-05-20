@@ -704,11 +704,10 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "summary": "Get an instant API key — no signup, no auth required",
                     "operationId": "issueKey",
                     "description": (
-                        "Returns a usable X-API-Key in under one second. No account, no email, no prior authentication required. "
-                        "The key is Tier 0 (48-hour TTL). One active Tier 0 key per agent_label — repeat calls with the same label return 409. "
+                        "Returns a usable X-API-Key in under one second. No account, no email, no payment, no prior authentication. "
+                        "The key is permanent and free. One active key per agent_label — repeat calls with the same label return 409. "
                         "Use this as the first call in any agent workflow to bootstrap access. "
-                        "Upgrade to a permanent Tier 1 key by calling POST /v1/keys/promote with an email address. "
-                        "Rate-limited per IP to prevent abuse."
+                        "The public test instance applies a low per-key rate limit — self-host for higher limits."
                     ),
                     "security": [],
                     "tags": ["Keys"],
@@ -717,11 +716,11 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                         when_to_use=(
                             "Use issueKey as the very first call when your agent has no X-API-Key. "
                             "No prior auth is needed — call this endpoint unauthenticated. "
-                            "Do NOT call this on every run — store the returned key and reuse it until expiry. "
+                            "Do NOT call this on every run — store the returned key and reuse it. "
                             "If you get 409, a key for this label already exists — check your stored keys."
                         ),
                         output_type="key_object",
-                        prompt="Issue a Tier 0 API key for my agent labeled 'research-agent-01' so it can access Backchannel immediately.",
+                        prompt="Issue an API key for my agent labeled 'research-agent-01' so it can access Backchannel immediately.",
                         agent_prompt_snippet="If you have no X-API-Key, call issueKey with {\"agent_label\": \"<descriptive-name>\"} (no auth header needed). Store the returned key and use it as X-API-Key on all subsequent calls.",
                     ),
                     **json_body(
@@ -740,56 +739,14 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                             "content": {"application/json": {"schema": {
                                 "type": "object",
                                 "properties": {
-                                    "key": {"type": "string", "example": "bc_01abc123"},
-                                    "tier": {"type": "integer", "example": 0},
-                                    "expires_at": {"type": "string", "format": "date-time"},
+                                    "key": {"type": "string", "example": "bck_01abc123.secret"},
+                                    "key_id": {"type": "string"},
+                                    "expires_at": {"type": ["string", "null"], "description": "Always null — keys are permanent."},
+                                    "rate_limit": {"type": "integer"},
                                 },
                             }}},
                         },
                         **errors(409, 422, 429),
-                    },
-                }
-            },
-            "/v1/keys/promote": {
-                "post": {
-                    "summary": "Promote a Tier 0 key to Tier 1 (Free, permanent)",
-                    "operationId": "promoteKey",
-                    "description": (
-                        "Upgrades the authenticated Tier 0 key to Tier 1 (Free). "
-                        "Requires a valid email address. The key value remains the same; only the tier changes. "
-                        "Tier 2 (Pro) and Tier 3 (Pro+) are available via the API Depot UI."
-                    ),
-                    "security": auth_required,
-                    "tags": ["Keys"],
-                    **hints(
-                        tool_name="promote_backchannel_key",
-                        when_to_use="when the Tier 0 test key is about to expire and the agent needs to continue operating — upgrade to permanent Tier 1",
-                        output_type="key_object",
-                        prompt="Promote my Tier 0 test key to Tier 1 using email 'dev@example.com' so it doesn't expire.",
-                    ),
-                    **json_body(
-                        {
-                            "type": "object",
-                            "required": ["email"],
-                            "properties": {
-                                "email": {"type": "string", "format": "email", "example": "dev@example.com"},
-                            },
-                        },
-                        example={"email": "dev@example.com"},
-                    ),
-                    "responses": {
-                        "200": {
-                            "description": "Key promoted",
-                            "content": {"application/json": {"schema": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {"type": "string"},
-                                    "tier": {"type": "integer", "example": 1},
-                                    "expires_at": {"type": ["string", "null"]},
-                                },
-                            }}},
-                        },
-                        **errors(401, 409, 410, 422),
                     },
                 }
             },

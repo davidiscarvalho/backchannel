@@ -49,24 +49,10 @@ class SecurityAuditTests(unittest.TestCase):
         events = self.store.list_security_events()
         self.assertEqual(len(events), 1)
         ev = events[0]
-        self.assertEqual(ev["event_type"], "key.issue.tier0")
+        self.assertEqual(ev["event_type"], "key.issue")
         self.assertEqual(ev["subject_key_id"], body["key_id"])
         self.assertEqual(ev["remote_addr"], "203.0.113.7")
         self.assertEqual(ev["detail"]["agent_label"], "audit-1")
-
-    def test_promote_key_records_audit_event(self) -> None:
-        _, issued = self._req("POST", "/v1/keys", body={"agent_label": "audit-promote"})
-        _, promoted = self._req(
-            "POST", "/v1/keys/promote",
-            body={"email": "a@b.c"}, api_key=issued["key"],
-        )
-        events = self.store.list_security_events()
-        event_types = [e["event_type"] for e in events]
-        self.assertIn("key.promote", event_types)
-        promote_ev = next(e for e in events if e["event_type"] == "key.promote")
-        self.assertEqual(promote_ev["actor_key_id"], issued["key_id"])
-        self.assertEqual(promote_ev["subject_key_id"], promoted["key_id"])
-        self.assertEqual(promote_ev["detail"]["email"], "a@b.c")
 
     def test_security_audit_endpoint_scopes_to_caller(self) -> None:
         # Two separate keys; each should only see its own events.

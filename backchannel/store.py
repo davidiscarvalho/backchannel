@@ -2057,9 +2057,7 @@ class BackchannelStore:
         key_hash: str,
         owner_id: str,
         agent_label: str | None,
-        tier: int = 0,
         plan: str = "free",
-        email: str | None = None,
         team_id: str | None = None,
         team_name: str | None = None,
         ttl_seconds: int | None = None,
@@ -2078,27 +2076,18 @@ class BackchannelStore:
                     raise APIError(
                         409,
                         "label_in_use",
-                        "An active key for this agent label already exists. Revoke it or promote via POST /v1/keys/promote.",
+                        "An active key for this agent label already exists. Use a different label.",
                     )
             conn.execute(
                 """
                 INSERT INTO api_keys (
                     key_id, key_hash, owner_id, agent_label, plan, tier, active,
                     team_id, team_name, email, credit_balance_micros, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?, NULL, 0, ?, ?)
                 """,
                 (
-                    key_id,
-                    key_hash,
-                    owner_id,
-                    agent_label,
-                    plan,
-                    tier,
-                    team_id,
-                    team_name,
-                    email,
-                    to_timestamp(now),
-                    expires_at,
+                    key_id, key_hash, owner_id, agent_label, plan,
+                    team_id, team_name, to_timestamp(now), expires_at,
                 ),
             )
             conn.commit()
@@ -2107,7 +2096,6 @@ class BackchannelStore:
             "owner_id": owner_id,
             "agent_label": agent_label,
             "plan": plan,
-            "tier": tier,
             "team_id": team_id,
             "team_name": team_name,
             "expires_at": expires_at,
@@ -2117,8 +2105,8 @@ class BackchannelStore:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT key_id, owner_id, agent_label, plan, tier, active, team_id, team_name,
-                       email, credit_balance_micros, expires_at, created_at, promoted_at
+                SELECT key_id, owner_id, agent_label, plan, active, team_id, team_name,
+                       expires_at, created_at
                 FROM api_keys
                 WHERE key_id = ? AND key_hash = ?
                 """,
@@ -2136,59 +2124,12 @@ class BackchannelStore:
                 "owner_id": row["owner_id"],
                 "agent_label": row["agent_label"],
                 "plan": row["plan"],
-                "tier": row["tier"],
                 "active": bool(row["active"]),
                 "team_id": row["team_id"],
                 "team_name": row["team_name"],
-                "email": row["email"],
-                "credit_balance_micros": row["credit_balance_micros"],
                 "expires_at": parse_timestamp(row["expires_at"]) if row["expires_at"] else None,
                 "created_at": row["created_at"],
-                "promoted_at": row["promoted_at"],
             }
-
-    def promote_api_key(
-        self,
-        *,
-        current_key_id: str,
-        new_key_id: str,
-        new_key_hash: str,
-        email: str,
-    ) -> dict[str, Any]:
-        now = self.now()
-        with self.connect() as conn:
-            current = conn.execute(
-                "SELECT key_id, owner_id, agent_label, team_id, team_name, promoted_at, expires_at FROM api_keys WHERE key_id = ?",
-                (current_key_id,),
-            ).fetchone()
-            if current is None:
-                raise APIError(404, "key_not_found", "Key not found")
-            if current["promoted_at"] is not None:
-                raise APIError(409, "already_promoted", "This key has already been promoted")
-            conn.execute(
-                """
-                INSERT INTO api_keys (
-                    key_id, key_hash, owner_id, agent_label, plan, tier, active,
-                    team_id, team_name, email, credit_balance_micros, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, 'free', 1, 1, ?, ?, ?, 0, ?, NULL)
-                """,
-                (
-                    new_key_id,
-                    new_key_hash,
-                    current["owner_id"],
-                    current["agent_label"],
-                    current["team_id"],
-                    current["team_name"],
-                    email,
-                    to_timestamp(now),
-                ),
-            )
-            conn.execute(
-                "UPDATE api_keys SET promoted_at = ?, active = 0 WHERE key_id = ?",
-                (to_timestamp(now), current_key_id),
-            )
-            conn.commit()
-        return {"key_id": new_key_id, "tier": 1, "expires_at": None}
 
     def revoke_api_key(self, key_id: str) -> None:
         with self.connect() as conn:
@@ -2198,76 +2139,10 @@ class BackchannelStore:
     def get_api_key_record(self, key_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT key_id, owner_id, agent_label, plan, tier, active, email, credit_balance_micros, expires_at, created_at, last_used_at FROM api_keys WHERE key_id = ?",
+                "SELECT key_id, owner_id, agent_label, plan, active, expires_at, created_at, last_used_at FROM api_keys WHERE key_id = ?",
                 (key_id,),
             ).fetchone()
             return dict(row) if row else None
-
-    # --- credit ledger -----------------------------------------------
-
-    def credit_balance_micros(self, key_id: str) -> int:
-        """Return the current USDC credit balance in micros (1 USDC = 1_000_000)."""
-        with self.connect() as conn:
-            row = conn.execute(
-                "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?",
-                (key_id,),
-            ).fetchone()
-            return int(row["credit_balance_micros"]) if row else 0
-
-    def add_credit_micros(self, key_id: str, amount_micros: int) -> int:
-        """Increment a key's credit balance and return the new balance.
-
-        Caller is responsible for idempotency (e.g. checking that the same
-        x402 settlement_id is not applied twice).
-        """
-        if amount_micros < 0:
-            raise APIError(422, "invalid_amount", "amount_micros must be >= 0")
-        with self.connect() as conn:
-            cursor = conn.execute(
-                "UPDATE api_keys SET credit_balance_micros = credit_balance_micros + ? WHERE key_id = ?",
-                (amount_micros, key_id),
-            )
-            if cursor.rowcount == 0:
-                raise APIError(404, "key_not_found", "Key not found")
-            row = conn.execute(
-                "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?", (key_id,)
-            ).fetchone()
-            conn.commit()
-            return int(row["credit_balance_micros"])
-
-    def debit_credit_micros(self, key_id: str, amount_micros: int) -> int:
-        """Atomically debit a key's credit balance. Returns the new balance.
-
-        Raises APIError(402, 'insufficient_credit') if the balance would go
-        negative — the agent should top up via /v1/keys/x402.
-        """
-        if amount_micros < 0:
-            raise APIError(422, "invalid_amount", "amount_micros must be >= 0")
-        with self.connect() as conn:
-            cursor = conn.execute(
-                "UPDATE api_keys SET credit_balance_micros = credit_balance_micros - ? "
-                "WHERE key_id = ? AND credit_balance_micros >= ?",
-                (amount_micros, key_id, amount_micros),
-            )
-            if cursor.rowcount == 0:
-                row = conn.execute(
-                    "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?",
-                    (key_id,),
-                ).fetchone()
-                if row is None:
-                    raise APIError(404, "key_not_found", "Key not found")
-                raise APIError(
-                    402,
-                    "insufficient_credit",
-                    f"Need {amount_micros} micros, balance is {row['credit_balance_micros']}. "
-                    "Top up via POST /v1/keys/x402.",
-                    {"balance_micros": int(row["credit_balance_micros"])},
-                )
-            row = conn.execute(
-                "SELECT credit_balance_micros FROM api_keys WHERE key_id = ?", (key_id,)
-            ).fetchone()
-            conn.commit()
-            return int(row["credit_balance_micros"])
 
     # --- Channel metrics ------------------------------------------------
 

@@ -23,12 +23,6 @@ from backchannel.auth import (
     mint_raw_key,
     split_key,
 )
-from backchannel.x402 import (
-    PaymentRequirement,
-    X402Config,
-    X402Decision,
-    X402Middleware,
-)
 from backchannel.observability import record_request, registry as metrics_registry
 from backchannel.landing import render_landing_page
 from backchannel.openapi import build_openapi_spec
@@ -108,12 +102,21 @@ class BackchannelApp:
             "",
         )
         self.base_url = os.environ.get("BACKCHANNEL_BASE_URL", "")
-        # Legacy depot env vars are intentionally ignored — auth is self-contained now.
         self.demo_key = os.environ.get("BACKCHANNEL_DEMO_KEY", "")
-        # 'hosted' on backchannel.oakstack.eu; 'self-hosted' anywhere else.
+        # 'hosted' on the public test instance; 'self-hosted' anywhere else.
         # Agents can branch on /health.instance_kind if they care.
         self.instance_kind = os.environ.get("BACKCHANNEL_INSTANCE_KIND", "self-hosted")
-        self.x402 = X402Middleware(X402Config.from_env())
+        # Per-key request rate limit. The public test instance ships a low
+        # default (10/hour) to keep it a sandbox, not a production backend —
+        # self-hosters raise BACKCHANNEL_RATE_LIMIT / _WINDOW (0 = unlimited).
+        try:
+            self.rate_limit = int(os.environ.get("BACKCHANNEL_RATE_LIMIT", "10"))
+        except ValueError:
+            self.rate_limit = 10
+        try:
+            self.rate_limit_window = int(os.environ.get("BACKCHANNEL_RATE_LIMIT_WINDOW", "3600"))
+        except ValueError:
+            self.rate_limit_window = 3600
         self.invitation_rate_limiter = invitation_rate_limiter or SlidingWindowRateLimiter(
             limit=10,
             window_seconds=60,
@@ -124,10 +127,10 @@ class BackchannelApp:
             window_seconds=3600,
             now_provider=self.store.now,
         )
-        # Non-enforcing tracker for X-RateLimit-Remaining header (keyed by key_id)
+        # Enforcing per-key request limiter.
         self.api_rate_tracker = SlidingWindowRateLimiter(
-            limit=300,
-            window_seconds=60,
+            limit=max(1, self.rate_limit) if self.rate_limit else 1_000_000,
+            window_seconds=self.rate_limit_window,
             now_provider=self.store.now,
         )
         self.routes: list[tuple[str, re.Pattern[str], bool, RouteHandler]] = [
@@ -143,9 +146,6 @@ class BackchannelApp:
             ("GET", re.compile(r"^/llms\.txt$"), False, self.llms_txt),
             ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors)\.md$"), False, self.read_doc),
             ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
-            ("GET", re.compile(r"^/compare$"), False, self.compare),
-            ("GET", re.compile(r"^/pricing$"), False, self.pricing_page),
-            ("GET", re.compile(r"^/why-hosted$"), False, self.why_hosted_page),
             ("GET", re.compile(r"^/metrics$"), False, self.prometheus_metrics),
             ("GET", re.compile(r"^/robots\.txt$"), False, self.robots_txt),
             ("GET", re.compile(r"^/\.well-known/ai-plugin\.json$"), False, self.ai_plugin),
@@ -174,8 +174,6 @@ class BackchannelApp:
             ("DELETE", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)$"), True, self.delete_message),
             ("DELETE", re.compile(r"^/v1/channels/(?P<identifier>[^/]+)$"), True, self.delete_channel),
             ("POST", re.compile(r"^/v1/keys$"), False, self.issue_key),
-            ("POST", re.compile(r"^/v1/keys/x402$"), False, self.issue_key_x402),
-            ("POST", re.compile(r"^/v1/keys/promote$"), True, self.promote_key),
             ("POST", re.compile(r"^/v1/tasks/broadcast$"), True, self.task_broadcast),
             ("POST", re.compile(r"^/v1/tasks/post$"), True, self.task_post),
             ("POST", re.compile(r"^/v1/tasks/claim$"), True, self.task_claim_verb),
@@ -185,7 +183,6 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/tasks/post-with-result$"), True, self.task_post_with_result),
             ("POST", re.compile(r"^/v1/tasks/(?P<message_id>[^/]+)/result$"), True, self.task_publish_result),
             ("GET", re.compile(r"^/v1/tasks/(?P<message_id>[^/]+)/result$"), True, self.task_await_result),
-            ("GET", re.compile(r"^/v1/pricing/estimate$"), False, self.pricing_estimate),
             ("GET", re.compile(r"^/v1/sessions$"), True, self.list_sessions),
             ("POST", re.compile(r"^/v1/sessions$"), True, self.create_session),
             ("GET", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.get_session),
@@ -246,14 +243,14 @@ class BackchannelApp:
             ("Content-Length", str(len(response.body))),
             ("X-Request-Id", request_id),
             ("traceparent", traceparent),
-            ("X-RateLimit-Limit", "300"),
-            ("X-RateLimit-Window", "60"),
+            ("X-RateLimit-Limit", str(self.rate_limit)),
+            ("X-RateLimit-Window", str(self.rate_limit_window)),
         ]
         if response.status < 400:
             headers.append(('Link', '</openapi.json>; rel="service-desc"'))
             headers.append(('Link', '</.well-known/ai-manifest.json>; rel="ai-manifest"'))
         if response.status == 429:
-            headers.append(("Retry-After", "60"))
+            headers.append(("Retry-After", str(self.rate_limit_window)))
         headers.extend(response.extra_headers)
         start_response(
             f"{response.status} {HTTPStatus(response.status).phrase}",
@@ -282,10 +279,9 @@ class BackchannelApp:
                 if requires_auth:
                     request.auth = self.authenticator.authenticate(request.headers)
                     request.auth.scopes = self.store.get_key_scopes(request.auth.key_id)
-                    rate_limits_by_tier = {0: 300, 1: 300, 2: 1000}
-                    tier_limit = rate_limits_by_tier.get(request.auth.tier or 0, 300)
-                    remaining = self.api_rate_tracker.track(request.auth.key_id, limit=tier_limit)
-                    # Will be appended to response headers below
+                    # Enforce the per-key rate limit. The public instance ships
+                    # a low default; self-hosters raise it via env.
+                    remaining = self.api_rate_tracker.enforce(request.auth.key_id)
                     request.rate_limit_remaining = remaining
                 # Idempotency middleware for mutation requests.
                 #
@@ -478,8 +474,7 @@ GET  /v1/actors/<id_or_alias>
 POST /v1/actors/<id>/aliases      {{"alias":"<str>"}}
 
 ### Keys (self-serve)
-POST /v1/keys                     {{"agent_label":"<str>"}}  → instant Tier 0 key, no auth required
-POST /v1/keys/promote             {{"email":"<str>"}}  → promotes to managed Tier 1 key
+POST /v1/keys                     {{"agent_label":"<str>"}}  → permanent key, free, no signup
 
 ### Invitations
 GET    /v1/channel-invitations/<id>   resolves token; grants restricted channel access on first call
@@ -549,376 +544,6 @@ Recovery path:
         body = metrics_registry.render_prometheus().encode("utf-8")
         return Response(status=200, body=body, content_type="text/plain; version=0.0.4")
 
-    def why_hosted_page(self, request: Request) -> Response:
-        html = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Backchannel — self-host or hosted?</title>
-  <meta name="description" content="Backchannel is free, MIT-licensed, and self-hostable. The hosted instance at backchannel.oakstack.eu is for people who want to skip the ops.">
-  <style>
-    :root { --bg:#020402; --line:rgba(84,255,138,0.28); --text:#d6ffd8;
-            --muted:#8bcf90; --accent:#58ff7d; }
-    body { margin:0; padding:40px 20px; background:var(--bg); color:var(--text);
-           font-family:'IBM Plex Mono',monospace; line-height:1.55; }
-    .wrap { max-width:980px; margin:0 auto; }
-    a { color:var(--accent); }
-    h1 { font-size:2.4rem; letter-spacing:-0.03em; margin:24px 0 8px; }
-    h1 .accent { color:var(--accent); }
-    p.lede { color:var(--muted); margin:0 0 32px; max-width:760px; }
-    .cols { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:24px; }
-    .col { padding:24px; border:1px solid var(--line); border-radius:16px;
-           background:rgba(7,20,8,0.84); }
-    .col h2 { margin-top:0; font-size:1.3rem; color:var(--accent); }
-    .col ul { padding-left:18px; margin:8px 0 0; }
-    .col li { margin:6px 0; }
-    .pill { display:inline-block; padding:4px 10px; border-radius:999px;
-            background:rgba(88,255,125,0.10); border:1px solid var(--accent);
-            font-size:0.7rem; letter-spacing:0.06em; text-transform:uppercase;
-            color:var(--accent); margin-bottom:10px; }
-    .moat { margin-top:36px; padding:20px; border:1px dashed var(--line);
-            border-radius:12px; color:var(--muted); }
-    .cta { display:flex; gap:12px; flex-wrap:wrap; margin-top:32px; }
-    .cta a { padding:12px 18px; border:1px solid var(--accent); border-radius:8px;
-             text-decoration:none; }
-    .cta a.primary { background:var(--accent); color:var(--bg); }
-    .small { color:var(--muted); font-size:0.85rem; }
-    table { width:100%; border-collapse:collapse; margin-top:32px;
-            border:1px solid var(--line); }
-    td, th { padding:12px 14px; text-align:left; border-bottom:1px solid var(--line); }
-    th { color:var(--accent); background:rgba(88,255,125,0.05); }
-    .yes { color:var(--accent); } .no { color:#ffb347; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <p class="small"><a href="/">← Backchannel</a></p>
-    <h1>Self-host, or use ours?<br><span class="accent">Same software. Different bill.</span></h1>
-    <p class="lede">
-      Backchannel is MIT-licensed. The whole product runs on your laptop,
-      your VPS, your kubernetes cluster — for free, forever. We also run a
-      hosted instance at <code>backchannel.oakstack.eu</code> for people
-      who want the running service without operating it.
-    </p>
-
-    <div class="cols">
-      <article class="col">
-        <span class="pill">Self-host</span>
-        <h2>Free, forever. You operate it.</h2>
-        <ul>
-          <li>One container, single SQLite file, no external deps.</li>
-          <li><code>docker compose up</code> and you have a working endpoint.</li>
-          <li>Full feature parity: same MCP server, same protocol, same SDKs.</li>
-          <li>Your data stays on your box.</li>
-          <li>x402 / Stripe still work — wire your own wallet + facilitator.</li>
-        </ul>
-        <p class="small" style="margin-top:14px">
-          Best for: agents inside a private network, sensitive data,
-          on-prem deployments, hobbyists.
-        </p>
-      </article>
-      <article class="col">
-        <span class="pill">Hosted</span>
-        <h2>Free trial. Pay when you scale.</h2>
-        <ul>
-          <li>Always-on at a public address agents can default to.</li>
-          <li>Listed in the MCP registry and Claude Code marketplace.</li>
-          <li>x402 receiving wallet is wired — agents can pay-per-call out of the box.</li>
-          <li>Backups, monitoring, security audit log — already running.</li>
-          <li>Status page, p95 latency dashboards, 24h SLA on Scale.</li>
-        </ul>
-        <p class="small" style="margin-top:14px">
-          Best for: shipping today, cross-org agent coordination,
-          accepting USDC without running infra.
-        </p>
-      </article>
-    </div>
-
-    <table>
-      <thead>
-        <tr><th></th><th>Self-host</th><th>Hosted</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Protocol &amp; features</td>
-            <td class="yes">identical</td><td class="yes">identical</td></tr>
-        <tr><td>Price</td>
-            <td class="yes">€0</td><td>Free 48h → €9.99/mo Pro → €39.99/mo Scale → $5 / 6k credits via x402<br><span style="opacity:0.7;font-size:0.85em">(launch — Pro/Scale rise to €19/€49 on 2026-08-15)</span></td></tr>
-        <tr><td>Setup time</td>
-            <td>~10 min (docker compose)</td><td>60 s (POST /v1/keys)</td></tr>
-        <tr><td>Public address</td>
-            <td>your DNS</td><td><code>backchannel.oakstack.eu</code></td></tr>
-        <tr><td>SLA</td><td class="no">your call</td>
-            <td class="yes">99% Pro / 99.9% Scale</td></tr>
-        <tr><td>x402 settlement</td>
-            <td>wire your own facilitator</td><td class="yes">configured</td></tr>
-        <tr><td>Stripe billing</td>
-            <td class="no">N/A</td><td class="yes">configured</td></tr>
-        <tr><td>MCP registry listing</td>
-            <td class="no">your own listing</td><td class="yes">pre-listed</td></tr>
-        <tr><td>Backups, monitoring</td>
-            <td>you run them</td><td class="yes">we run them</td></tr>
-      </tbody>
-    </table>
-
-    <div class="moat">
-      <strong>One more thing.</strong> The hosted instance is the default
-      address baked into the MCP server, the Claude Code plugin, the
-      Python and TypeScript SDKs. An agent that <code>pip install
-      backchannel-mcp</code>s points at us until someone tells it not to.
-      That's the value the hosted tier sells — not the code, the default.
-    </div>
-
-    <div class="cta">
-      <a class="primary" href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host (10 min) →</a>
-      <a href="/">Get a Test key →</a>
-      <a href="/pricing">Pricing table →</a>
-    </div>
-  </div>
-</body>
-</html>"""
-        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
-
-    def pricing_page(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
-        html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Backchannel — pricing</title>
-    <meta name="description" content="Backchannel pricing. Free 48h test key. €9.99/mo Pro. €39.99/mo Scale. Pay-per-call in USDC via x402 for agent-native billing.">
-    <style>
-      :root {{
-        --bg: #020402; --panel: rgba(7,20,8,0.84); --line: rgba(84,255,138,0.28);
-        --text: #d6ffd8; --muted: #8bcf90; --accent: #58ff7d;
-      }}
-      body {{ margin: 0; padding: 32px 20px; background: var(--bg); color: var(--text);
-              font-family: 'IBM Plex Mono', 'Menlo', monospace; line-height: 1.5; }}
-      .wrap {{ max-width: 1100px; margin: 0 auto; }}
-      a {{ color: var(--accent); text-decoration: none; }}
-      a:hover {{ text-decoration: underline; }}
-      h1 {{ font-size: 2.4rem; letter-spacing: -0.03em; margin: 0 0 0.4em; }}
-      h1 .accent {{ color: var(--accent); }}
-      p.lede {{ color: var(--muted); margin: 0 0 32px; max-width: 700px; }}
-      table.cmp {{ width: 100%; border-collapse: collapse; margin: 32px 0;
-                   border: 1px solid var(--line); background: var(--panel); }}
-      table.cmp th, table.cmp td {{
-        padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--line);
-        vertical-align: top; font-size: 0.9rem;
-      }}
-      table.cmp thead th {{ background: rgba(88,255,125,0.08); color: var(--accent); }}
-      table.cmp tbody tr:last-child td {{ border-bottom: none; }}
-      table.cmp tbody tr.row-feature td:first-child {{ color: var(--muted); }}
-      table.cmp td.tier-price {{ font-size: 1.2rem; font-weight: 700; color: var(--accent); }}
-      table.cmp td.tier-x402 {{ font-style: italic; opacity: 0.85; }}
-      table.cmp td.yes {{ color: var(--accent); }}
-      table.cmp td.no {{ color: rgba(255,120,120,0.85); }}
-      .cta-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin-top: 32px; }}
-      .cta-row a.btn {{ padding: 12px 20px; border: 1px solid var(--accent); border-radius: 8px;
-                        background: rgba(88,255,125,0.06); }}
-      .cta-row a.btn.primary {{ background: var(--accent); color: var(--bg); border-color: var(--accent); }}
-      .small {{ color: var(--muted); font-size: 0.85rem; }}
-      .footnote {{ color: var(--muted); font-size: 0.8rem; margin-top: 24px; }}
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <p class="small"><a href="/">← Backchannel</a></p>
-      <h1>Pricing.<br><span class="accent">Pick the lane that matches the agent.</span></h1>
-      <p class="lede">
-        Backchannel charges for production access, not for trying it.
-        Spin up a 48-hour test key without signing up. When the agent is
-        ready, upgrade — by email (Pro, Scale) or by USDC (x402).
-      </p>
-
-      <table class="cmp">
-        <thead>
-          <tr>
-            <th></th>
-            <th>Test</th>
-            <th>Pro</th>
-            <th>Scale</th>
-            <th>x402</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>Price</strong></td>
-            <td class="tier-price">Free</td>
-            <td class="tier-price">€9.99<span class="small">/mo<br><span style="opacity:0.7;font-weight:400">rises to €19 on 2026-08-15</span></span></td>
-            <td class="tier-price">€39.99<span class="small">/mo<br><span style="opacity:0.7;font-weight:400">rises to €49 on 2026-08-15</span></span></td>
-            <td class="tier-price tier-x402">$5<span class="small">/ 6,000 credits<br><span style="opacity:0.7;font-weight:400">~$0.00083 / op</span></span></td>
-          </tr>
-          <tr><td><strong>Audience</strong></td>
-            <td>Evaluation</td><td>Single agent / small team</td>
-            <td>Agent swarms</td><td>Wallet-equipped agents</td></tr>
-          <tr><td><strong>Key lifetime</strong></td>
-            <td>48 hours</td><td>Permanent</td>
-            <td>Permanent</td><td>Permanent until credits run out</td></tr>
-          <tr><td><strong>Rate limit / volume</strong></td>
-            <td>300 req/min</td><td>300 req/min</td>
-            <td>1000 req/min</td><td>6,000 metered ops per $5 pack</td></tr>
-          <tr><td><strong>What costs a credit (x402 only)</strong></td>
-            <td>—</td><td>—</td><td>—</td>
-            <td>POST a message; claim a message. Reads, acks, releases, heartbeats are free.</td></tr>
-          <tr><td><strong>Channels</strong></td>
-            <td class="yes">unlimited</td><td class="yes">unlimited</td>
-            <td class="yes">unlimited</td><td class="yes">unlimited</td></tr>
-          <tr><td><strong>Restricted channels + invitations</strong></td>
-            <td class="yes">yes</td><td class="yes">yes</td>
-            <td class="yes">yes</td><td class="yes">yes</td></tr>
-          <tr><td><strong>Claim-with-lease + heartbeat</strong></td>
-            <td class="yes">yes</td><td class="yes">yes</td>
-            <td class="yes">yes</td><td class="yes">yes</td></tr>
-          <tr><td><strong>Webhooks</strong></td>
-            <td class="yes">yes</td><td class="yes">yes</td>
-            <td class="yes">yes</td><td class="yes">yes</td></tr>
-          <tr><td><strong>Team quotas</strong></td>
-            <td class="no">no</td><td class="yes">yes</td>
-            <td class="yes">yes</td><td class="no">no</td></tr>
-          <tr><td><strong>Priority support</strong></td>
-            <td class="no">community</td><td>email (best-effort)</td>
-            <td class="yes">email (24h SLA)</td><td>community</td></tr>
-          <tr><td><strong>Signup</strong></td>
-            <td>none</td><td>email magic-link</td>
-            <td>email magic-link</td><td>wallet (no email)</td></tr>
-          <tr><td><strong>Settlement</strong></td>
-            <td>—</td><td>Stripe (monthly)</td>
-            <td>Stripe (monthly + metered overage)</td>
-            <td>USDC on Base via <a href="https://www.x402.org/">x402</a></td></tr>
-          <tr><td><strong>Get started</strong></td>
-            <td><code>POST /v1/keys</code></td>
-            <td><code>POST /v1/keys/promote</code></td>
-            <td><code>POST /v1/keys/promote</code></td>
-            <td><code>POST /v1/keys/x402</code></td></tr>
-        </tbody>
-      </table>
-
-      <p class="small">
-        <strong>Launch pricing on Pro &amp; Scale runs through 2026-08-15.</strong>
-        Subscribe now and lock in €9.99 / €39.99 — anyone who signs up after
-        that date pays €19 / €49. x402 is opt-in per instance — see
-        <a href="/docs/x402.md">docs/x402.md</a> for facilitator setup.
-      </p>
-
-      <div class="cta-row">
-        <a class="btn primary" href="/">Get a Test key (60 seconds)</a>
-        <a class="btn" href="/docs/x402.md">Pay-per-call docs</a>
-        <a class="btn" href="/llms.txt">llms.txt</a>
-        <a class="btn" href="/openapi.json">OpenAPI</a>
-      </div>
-
-      <p class="footnote">
-        All tiers run the same engine, the same protocol, and the same
-        agent-first surface. The difference is volume, support, and how
-        you settle the bill.
-      </p>
-    </div>
-  </body>
-</html>
-"""
-        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
-
-    def compare(self, request: Request) -> Response:
-        html = """<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Backchannel vs. Alternatives</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; }
-      table { border-collapse: collapse; width: 100%; margin-top: 1.5rem; }
-      th, td { border: 1px solid #ddd; padding: 0.6rem 0.8rem; text-align: left; }
-      th { background: #f5f5f5; }
-      .win { color: #2a7a2a; font-weight: bold; }
-      .lose { color: #999; }
-      .partial { color: #888; }
-      p.note { color: #666; font-size: 0.9rem; }
-    </style>
-  </head>
-  <body>
-    <h1>Backchannel vs. Alternatives</h1>
-    <p>An honest feature matrix. Where a competitor wins, we say so.</p>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Feature</th>
-          <th>Backchannel</th>
-          <th>Redis pub/sub</th>
-          <th>AWS SQS</th>
-          <th>Raw DB queue</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Zero setup for consumers</td>
-          <td class="win">✓ HTTP, no client lib</td>
-          <td class="lose">✗ Redis client needed</td>
-          <td class="lose">✗ AWS SDK needed</td>
-          <td class="partial">~ depends on DB</td>
-        </tr>
-        <tr>
-          <td>Atomic claim (first-wins)</td>
-          <td class="win">✓ exactly-once guarantee</td>
-          <td class="lose">✗ not supported</td>
-          <td class="partial">~ visibility timeout</td>
-          <td class="partial">~ with SELECT FOR UPDATE</td>
-        </tr>
-        <tr>
-          <td>Auto-expiry / TTL</td>
-          <td class="win">✓ 24h</td>
-          <td class="win">✓ configurable</td>
-          <td class="win">✓ up to 14 days</td>
-          <td class="lose">✗ manual cleanup</td>
-        </tr>
-        <tr>
-          <td>Agent-native discovery (OpenAPI, llms.txt)</td>
-          <td class="win">✓</td>
-          <td class="lose">✗</td>
-          <td class="lose">✗</td>
-          <td class="lose">✗</td>
-        </tr>
-        <tr>
-          <td>Instant free key (no sign-up)</td>
-          <td class="win">✓ POST /v1/keys</td>
-          <td class="lose">✗</td>
-          <td class="lose">✗ AWS account needed</td>
-          <td class="lose">✗</td>
-        </tr>
-        <tr>
-          <td>Horizontal scale</td>
-          <td class="lose">✗ single-node v1</td>
-          <td class="win">✓ clustered</td>
-          <td class="win">✓ managed</td>
-          <td class="lose">✗</td>
-        </tr>
-        <tr>
-          <td>Persistent storage (&gt;24h)</td>
-          <td class="lose">✗ 24h TTL is hard</td>
-          <td class="lose">✗ volatile by default</td>
-          <td class="partial">~ up to 14 days</td>
-          <td class="win">✓</td>
-        </tr>
-        <tr>
-          <td>Approximate cost at 1M req/day</td>
-          <td>€9.99/mo (Tier 1)</td>
-          <td>~€30/mo hosted</td>
-          <td>~€0.40/mo</td>
-          <td>infra cost only</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p class="note">Backchannel is optimised for agent coordination workloads: ephemeral handoffs between agents, broadcast fan-out, and temporary shared state. If you need persistent queues, durable storage, or high-throughput horizontal scale, use SQS or a purpose-built queue. Backchannel wins on simplicity, agent-native discovery, and exact-once claim semantics over HTTP.</p>
-    <p><a href="/agent-guide">Agent Guide</a> &middot; <a href="/openapi.json">OpenAPI</a> &middot; <a href="/docs/playground">Playground</a></p>
-  </body>
-</html>"""
-        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
-
     def robots_txt(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
         content = f"""User-agent: *
@@ -979,11 +604,11 @@ Allow: /
 
     def agent_policy(self, request: Request) -> Response:
         payload = {
-            "rate_limits": [
-                {"tier": 0, "requests_per_window": 300, "window_seconds": 60, "name": "Test"},
-                {"tier": 1, "requests_per_window": 300, "window_seconds": 60, "name": "Free"},
-                {"tier": 2, "requests_per_window": 1000, "window_seconds": 60, "name": "Pro"},
-            ],
+            "rate_limit": {
+                "requests_per_window": self.rate_limit,
+                "window_seconds": self.rate_limit_window,
+                "note": "The public test instance ships a low limit. Self-host for higher.",
+            },
             "retry_guidance": {
                 "on_429": "back_off_and_retry",
                 "retry_after_header": True,
@@ -992,6 +617,7 @@ Allow: /
             "message_ttl_hours": 24,
             "max_content_bytes": 65536,
             "claim_guarantee": "exactly_once",
+            "instance_kind": self.instance_kind,
         }
         return self.json_response(200, payload)
 
@@ -1020,9 +646,7 @@ Allow: /
                 "type": "api_key",
                 "header": "X-API-Key",
                 "obtain_url": f"{base}/v1/keys",
-                "obtain_description": "POST /v1/keys with {\"agent_label\": \"...\"} → instant 48h key, no signup. Promote later with /v1/keys/promote.",
-                "pay_per_call_url": f"{base}/v1/keys/x402",
-                "pay_per_call_description": "Agents with a wallet can pay-per-call in USDC via x402 — no signup, no card.",
+                "obtain_description": "POST /v1/keys with {\"agent_label\": \"...\"} → permanent key, no signup. Free. The public instance is rate-limited; self-host for more.",
             },
             "transports": {
                 "http": {"openapi_url": f"{base}/openapi.json"},
@@ -1137,11 +761,11 @@ You do not have a key unless you were given one. Mint one now:
   {{"agent_label": "<a short name for this agent>"}}
 
 The response includes `key` (use it in the `X-API-Key` header on every
-subsequent call) and `expires_at` (48h from now — promote with
-POST /v1/keys/promote {{"email": "..."}} for a permanent key).
+subsequent call). The key is permanent and free. The public instance
+rate-limits each key — self-host (see the repo) for higher limits.
 
-If you get 409 label_in_use, the label is taken by an active key. Either
-use a different label or promote/revoke the existing one.
+If you get 409 label_in_use, the label is taken by an active key.
+Use a different label.
 
 ## Step 1 — Decide the shape of the handoff
 
@@ -1216,7 +840,6 @@ If the receiving agent is in a different org or you do not control its key:
 ## Failure modes you must handle
 
   - 401 unauthorized        — your X-API-Key is missing/invalid/revoked.
-  - 410 key_expired         — your Tier-0 key passed 48h. POST /v1/keys/promote.
   - 409 already_claimed     — another agent got the message first. Move on.
   - 409 already_acknowledged — message was already acked. Treat as success.
   - 404 message_not_found    — message TTL expired or was retracted.
@@ -1277,18 +900,8 @@ is not accessible.
         )
         return self.json_response(201, invitation)
 
-    def _debit_x402_op(self, request: Request) -> None:
-        """If the caller's key is on the x402 plan, debit one metered op
-        from its credit balance. Raises 402 insufficient_credit when the
-        balance is too low — the agent must top up via POST /v1/keys/x402."""
-        auth = request.auth
-        if auth is None or auth.plan != "x402":
-            return
-        self.store.debit_credit_micros(auth.key_id, self.x402.config.per_op_micros())
-
     def create_message(self, request: Request, identifier: str) -> Response:
         self._require_scope(request.auth, "messages:write")
-        self._debit_x402_op(request)
         envelope = self.store.create_message(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
@@ -1332,7 +945,6 @@ is not accessible.
 
     def claim_message(self, request: Request, message_id: str) -> Response:
         self._require_scope(request.auth, "messages:claim")
-        self._debit_x402_op(request)
         payload = self.store.claim_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(200, payload)
 
@@ -1377,7 +989,12 @@ is not accessible.
         return self.json_response(200, invitation)
 
     def issue_key(self, request: Request) -> Response:
-        """Issue a Tier 0 key (48h TTL, no signup). Local — no external service."""
+        """Issue a permanent API key. No signup, no tiers, no payment.
+
+        On the public test instance the key carries a low rate limit
+        (BACKCHANNEL_RATE_LIMIT, default 10/hour) — it's a sandbox, not a
+        production backend. Self-hosters raise the limit or run unlimited.
+        """
         self.key_issuance_rate_limiter.check(request.remote_addr)
         body = request.json()
         agent_label = body.get("agent_label", "")
@@ -1385,145 +1002,31 @@ is not accessible.
             raise APIError(422, "missing_field", "'agent_label' is required")
         agent_label = agent_label.strip()[:128]
         key_id, _secret, raw_key = mint_raw_key()
-        record = self.store.issue_api_key(
+        self.store.issue_api_key(
             key_id=key_id,
             key_hash=hash_key(raw_key),
             owner_id=agent_label,
             agent_label=agent_label,
-            tier=0,
             plan="free",
-            ttl_seconds=48 * 3600,
+            ttl_seconds=None,  # permanent
         )
         self.store.record_security_event(
-            event_type="key.issue.tier0",
+            event_type="key.issue",
             subject_key_id=key_id,
             remote_addr=request.remote_addr,
-            detail={"agent_label": agent_label, "tier": 0},
+            detail={"agent_label": agent_label},
         )
         return self.json_response(
             201,
             {
                 "key": raw_key,
                 "key_id": key_id,
-                "tier": 0,
-                "expires_at": record["expires_at"],
+                "expires_at": None,
                 "agent_label": agent_label,
+                "rate_limit": self.rate_limit,
+                "rate_limit_window_seconds": self.rate_limit_window,
             },
         )
-
-    def issue_key_x402(self, request: Request) -> Response:
-        """x402-paid key issuance — pack pricing.
-
-        Agents call this with no auth. A 402 response advertises the pack
-        price (default $5 = 6,000 metered-op credits). After USDC settlement,
-        the agent retries with X-PAYMENT and receives a Tier-1 key whose
-        credit_balance_micros equals the pack value in USDC micros. Each
-        metered op (message creation, claim) debits per_op_micros
-        (pack_usdc / pack_credits ≈ $0.00083 default).
-
-        Single on-chain settlement per pack, not per call — the only way the
-        unit economics work given gas + facilitator fees.
-        """
-        if not self.x402.is_active():
-            raise APIError(
-                503,
-                "x402_unavailable",
-                "x402 payments are not configured on this instance. Use POST /v1/keys for a free 48h key.",
-            )
-        payment_header = request.headers.get("X-Payment") or request.headers.get("X-PAYMENT")
-        resource = f"{self.base_url or ''}/v1/keys/x402".lstrip("/")
-        cfg = self.x402.config
-        pack_requirement = PaymentRequirement(
-            network=cfg.network,
-            max_amount_required=cfg.pack_usdc,
-            pay_to=cfg.pay_to_address,
-            resource=resource,
-            description=(
-                f"Backchannel — {cfg.pack_credits} metered-op credits "
-                f"(${cfg.pack_usdc} USDC, ~${float(cfg.pack_usdc)/cfg.pack_credits:.5f}/call)"
-            ),
-            extra={
-                "pack_credits": cfg.pack_credits,
-                "per_op_usdc_micros": cfg.per_op_micros(),
-            },
-        )
-        if not payment_header:
-            body = self.x402.build_402_body(pack_requirement)
-            return Response(status=402, body=json.dumps(body).encode("utf-8"))
-        if not cfg.verifier.verify(payment_header, pack_requirement):
-            body = self.x402.build_402_body(pack_requirement)
-            body["error_detail"] = "payment_verification_failed"
-            return Response(status=402, body=json.dumps(body).encode("utf-8"))
-        settlement_id = f"x402-{uuid.uuid4().hex[:16]}"
-        # Verified — mint a paid key + credit the pack.
-        key_id, _secret, raw_key = mint_raw_key()
-        label = f"x402-{settlement_id}"
-        record = self.store.issue_api_key(
-            key_id=key_id,
-            key_hash=hash_key(raw_key),
-            owner_id=label,
-            agent_label=label,
-            tier=1,
-            plan="x402",
-        )
-        try:
-            pack_micros = int(round(float(cfg.pack_usdc) * 1_000_000))
-        except (TypeError, ValueError):
-            pack_micros = 0
-        if pack_micros > 0:
-            self.store.add_credit_micros(key_id, pack_micros)
-        self.store.record_security_event(
-            event_type="key.issue.x402",
-            subject_key_id=key_id,
-            remote_addr=request.remote_addr,
-            detail={
-                "settlement_id": settlement_id,
-                "pack_usdc": cfg.pack_usdc,
-                "pack_credits": cfg.pack_credits,
-                "credit_micros_applied": pack_micros,
-                "network": cfg.network,
-            },
-        )
-        return self.json_response(
-            201,
-            {
-                "key": raw_key,
-                "key_id": key_id,
-                "tier": 1,
-                "plan": "x402",
-                "settlement_id": settlement_id,
-                "expires_at": record["expires_at"],
-                "credit_micros_applied": pack_micros,
-                "pack_credits": cfg.pack_credits,
-                "per_op_micros": cfg.per_op_micros(),
-            },
-        )
-
-    def promote_key(self, request: Request) -> Response:
-        """Promote a Tier 0 key to a permanent Tier 1 key. Issues a NEW key
-        and revokes the old one. The new key is returned exactly once."""
-        body = request.json()
-        email = body.get("email", "")
-        if not isinstance(email, str) or not email.strip():
-            raise APIError(422, "missing_field", "'email' is required")
-        email = email.strip()[:320]
-        new_key_id, _secret, new_raw_key = mint_raw_key()
-        result = self.store.promote_api_key(
-            current_key_id=request.auth.key_id,
-            new_key_id=new_key_id,
-            new_key_hash=hash_key(new_raw_key),
-            email=email,
-        )
-        if hasattr(self.authenticator, "invalidate_cache"):
-            self.authenticator.invalidate_cache(request.auth.raw_key)
-        self.store.record_security_event(
-            event_type="key.promote",
-            actor_key_id=request.auth.key_id,
-            subject_key_id=new_key_id,
-            remote_addr=request.remote_addr,
-            detail={"email": email, "from_tier": 0, "to_tier": 1},
-        )
-        return self.json_response(200, {"key": new_raw_key, "key_id": new_key_id, "tier": 1, "expires_at": None})
 
     # --- agent-verb route aliases (B1) -------------------------------
 
@@ -1772,72 +1275,6 @@ is not accessible.
             )
         return self.json_response(200, {"task_id": message_id, "result": data[0]})
 
-    def pricing_estimate(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
-        cfg = self.x402.config
-        tiers = [
-            {
-                "tier": 0,
-                "name": "Test",
-                "description": "Instant key, no sign-up. 48-hour TTL. One active key per agent_label.",
-                "price_eur_monthly": 0,
-                "rate_limit_per_minute": 300,
-                "obtain_url": f"{base}/v1/keys",
-                "obtain_method": "POST /v1/keys with {\"agent_label\": \"<name>\"}",
-            },
-            {
-                "tier": 1,
-                "name": "Pro",
-                "description": "Permanent key. 300 req/min. Single agent or small team.",
-                "price_eur_monthly": 9.99,
-                "price_eur_monthly_after_launch": 19,
-                "launch_pricing": True,
-                "launch_pricing_ends": "2026-08-15",
-                "rate_limit_per_minute": 300,
-                "obtain_url": f"{base}/v1/billing/checkout",
-                "obtain_method": "POST /v1/billing/checkout with {\"tier\": \"pro\"}",
-            },
-            {
-                "tier": 2,
-                "name": "Scale",
-                "description": "1000 req/min. Team quotas. 24h support SLA.",
-                "price_eur_monthly": 39.99,
-                "price_eur_monthly_after_launch": 49,
-                "launch_pricing": True,
-                "launch_pricing_ends": "2026-08-15",
-                "rate_limit_per_minute": 1000,
-                "obtain_url": f"{base}/v1/billing/checkout",
-                "obtain_method": "POST /v1/billing/checkout with {\"tier\": \"scale\"}",
-            },
-            {
-                "tier": 1,
-                "name": "x402 Pack",
-                "description": (
-                    f"USDC pack on {cfg.network}. ${cfg.pack_usdc} = "
-                    f"{cfg.pack_credits} metered-op credits "
-                    f"(~${float(cfg.pack_usdc)/cfg.pack_credits:.5f} per call). "
-                    "Message creates + claims debit one credit; reads, acks, "
-                    "releases, heartbeats are free."
-                ),
-                "plan": "x402",
-                "pack_usdc": cfg.pack_usdc,
-                "pack_credits": cfg.pack_credits,
-                "per_op_micros": cfg.per_op_micros(),
-                "network": cfg.network,
-                "obtain_url": f"{base}/v1/keys/x402",
-                "obtain_method": "POST /v1/keys/x402 → 402 → settle USDC → retry with X-PAYMENT",
-            },
-        ]
-        return self.json_response(200, {
-            "tiers": tiers,
-            "launch_pricing_ends": "2026-08-15",
-            "note": (
-                "Launch pricing on Pro and Scale runs through 2026-08-15. "
-                "Lock in €9.99 / €39.99 now; afterwards the rates are €19 / €49. "
-                "x402 is opt-in per instance — packs apply only when x402 is enabled."
-            ),
-        })
-
     # --- Sessions (item19) ---
 
     def list_sessions(self, request: Request) -> Response:
@@ -1867,19 +1304,14 @@ is not accessible.
 
     def keys_me(self, request: Request) -> Response:
         auth = request.auth
-        record = self.store.get_api_key_record(auth.key_id) or {}
-        credit_micros = int(record.get("credit_balance_micros") or 0)
         return self.json_response(200, {
             "key_id": auth.key_id,
             "owner_id": auth.owner_id,
-            "tier": auth.tier,
             "plan": auth.plan,
             "active": auth.active,
             "scopes": auth.scopes,
-            "credit": {
-                "balance_usdc_micros": credit_micros,
-                "balance_usdc": f"{credit_micros / 1_000_000:.6f}",
-            },
+            "rate_limit": self.rate_limit,
+            "rate_limit_window_seconds": self.rate_limit_window,
         })
 
     def set_key_scopes(self, request: Request) -> Response:
@@ -1893,16 +1325,15 @@ is not accessible.
 
     def account_usage(self, request: Request) -> Response:
         auth = request.auth
-        rate_limits_by_tier = {0: 300, 1: 300, 2: 1000}
-        limit = rate_limits_by_tier.get(auth.tier or 0, 300)
         return self.json_response(200, {
-            "tier": auth.tier,
+            "key_id": auth.key_id,
             "plan": auth.plan,
             "rate_limit": {
-                "requests_per_window": limit,
-                "window_seconds": 60,
+                "requests_per_window": self.rate_limit,
+                "window_seconds": self.rate_limit_window,
             },
-            "note": "Per-request usage counters are not tracked in v1. Use X-RateLimit-Limit and X-RateLimit-Window headers to gauge headroom.",
+            "instance_kind": self.instance_kind,
+            "note": "Watch X-RateLimit-Remaining on responses. The public instance is a sandbox — self-host for higher limits.",
         })
 
     def _require_scope(self, auth: Any, required_scope: str) -> None:
@@ -1923,12 +1354,7 @@ is not accessible.
             "status": "operational",
             "instance_kind": self.instance_kind,
             "updated_at": self.store.now().isoformat(),
-            "tier_sla": {
-                "tier_0": "best-effort",
-                "tier_1": "99% monthly uptime",
-                "tier_2": "99.9% monthly uptime",
-            },
-            "sla_url": f"{base}/docs/sla.md",
+            "availability": "best-effort — this is a free, open test instance",
             "health_url": f"{base}/health",
             "self_host_url": "https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md",
         })

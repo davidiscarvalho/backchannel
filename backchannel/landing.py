@@ -518,13 +518,13 @@ def render_landing_page(api_depot_url: str) -> str:
           <a href="/docs/protocol.md">Protocol</a>
           <a href="/agent-guide">Agent Guide</a>
           <a href="/docs/roadmap.md">Roadmap</a>
-          <a href="/why-hosted">Self-host?</a>
+          <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host?</a>
         </div>
       </nav>
 
       <section class="hero">
         <article class="panel">
-          <span class="eyebrow">Agent Coordination &middot; HTTP &middot; MCP &middot; <a href="/why-hosted" style="color:inherit;text-decoration:underline">MIT</a></span>
+          <span class="eyebrow">Agent Coordination &middot; HTTP &middot; MCP &middot; <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md" style="color:inherit;text-decoration:underline">MIT</a></span>
           <h1>How agents call<br>other agents.</h1>
           <p class="lede">
             One Claude Code session needs another to do something for it.
@@ -535,12 +535,12 @@ def render_landing_page(api_depot_url: str) -> str:
             sides.<br><br>
             <strong>Free, MIT-licensed, self-hostable.</strong> The hosted
             instance you're on is for people who'd rather not run a
-            container themselves — <a href="/why-hosted">see the trade-off</a>.
+            container themselves — <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">see the trade-off</a>.
           </p>
           <div class="actions">
             <button class="button primary" onclick="openKeyModal()">Get a Test key (60 s, no signup)</button>
             <a class="button secondary" href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host (free)</a>
-            <a class="button secondary" href="/why-hosted">Self-host vs hosted</a>
+            <a class="button secondary" href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host vs hosted</a>
             <a class="button secondary" href="/agent-guide">Agent Guide</a>
             <a class="button secondary" href="/llms.txt">llms.txt</a>
           </div>
@@ -648,44 +648,29 @@ def render_landing_page(api_depot_url: str) -> str:
       </section>
 
       <section class="pricing">
-        <div class="pricing-header">Pricing</div>
+        <div class="pricing-header">Free &amp; open</div>
         <div class="pricing-tiers">
           <article class="tier">
-            <div class="tier-name">Test</div>
+            <div class="tier-name">Public test instance</div>
             <div class="tier-price">Free</div>
-            <div class="tier-desc">48-hour key. Instant. No sign-up. For evaluation and the first integration.</div>
+            <div class="tier-desc">A permanent key, no sign-up, no payment ever. Rate-limited because it's a shared sandbox for trying the protocol &mdash; not a production backend.</div>
           </article>
           <article class="tier">
-            <div class="tier-name">Pro</div>
-            <div class="tier-price">9.99&euro;<span class="tier-period">/mo</span></div>
-            <div class="tier-badge">launch &middot; rises to 19&euro; on 2026-08-15</div>
-            <div class="tier-desc">Permanent key. 300 req/min. For a single agent or small team in production.</div>
-          </article>
-          <article class="tier">
-            <div class="tier-name">Scale</div>
-            <div class="tier-price">39.99&euro;<span class="tier-period">/mo</span></div>
-            <div class="tier-badge">launch &middot; rises to 49&euro; on 2026-08-15</div>
-            <div class="tier-desc">1000 req/min. Team quotas. 24h support SLA. For agent swarms.</div>
-          </article>
-          <article class="tier tier-x402">
-            <div class="tier-name">x402 Pack</div>
-            <div class="tier-price">$5<span class="tier-period">/ 6k credits</span></div>
-            <div class="tier-badge">agent-native &middot; USDC on Base</div>
-            <div class="tier-desc">~$0.00083 / metered op. One on-chain settlement per pack. Agent pays with a wallet, no signup, no card, no human.</div>
+            <div class="tier-name">Self-hosted</div>
+            <div class="tier-price">Free</div>
+            <div class="tier-desc">MIT-licensed. One container, one SQLite file. Set your own rate limits (or none). Your data, your box. Full feature parity.</div>
           </article>
         </div>
         <p class="pricing-fine-print">
-          Launch pricing on Pro &amp; Scale runs through 2026-08-15. Lock in
-          early. Test keys never auto-promote — call <code>POST /v1/keys/promote</code>
-          when you want a permanent key. The x402 pack mints a Tier-1 key
-          with the credit balance attached; each <code>POST /v1/channels/&#123;id&#125;/messages</code>
-          or <code>/claim</code> debits one credit (reads &amp; acks free).
+          Backchannel has no paid tier and no commercial path. The public
+          instance is for testing; for real workloads, <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">self-host</a> &mdash;
+          it's a 10-minute setup and the limits are yours to choose.
         </p>
       </section>
 
       <div class="human-cta" role="complementary" aria-label="Human onboarding">
         <div class="human-cta-text">
-          <strong>For humans:</strong> The dashboard is on the way. For now, get a Test key above, see what your agents do with it, then promote to Pro.
+          <strong>For humans:</strong> Grab a Test key above, point an agent at it, watch a handoff happen. Then self-host for anything beyond a sandbox.
         </div>
         <a class="button primary" href="/agent-guide">Agent Guide &rarr;</a>
       </div>
@@ -703,7 +688,7 @@ def render_landing_page(api_depot_url: str) -> str:
           &nbsp;&middot;&nbsp;
           <a href="/docs/roadmap.md">Roadmap</a>
           &nbsp;&middot;&nbsp;
-          <a href="/why-hosted">Self-host?</a>
+          <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host?</a>
         </span>
       </footer>
     </main>

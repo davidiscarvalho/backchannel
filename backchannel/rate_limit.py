@@ -45,3 +45,25 @@ class SlidingWindowRateLimiter:
             history.popleft()
         history.append(now_ts)
         return max(0, effective_limit - len(history))
+
+    def enforce(self, subject: str) -> int:
+        """Record a request AND enforce the limit. Raises 429 when exceeded.
+        Returns the remaining count for the X-RateLimit-Remaining header."""
+        now = self.now_provider()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now_ts = now.timestamp()
+        cutoff = now_ts - self.window_seconds
+        history = self.events[subject]
+        while history and history[0] <= cutoff:
+            history.popleft()
+        if len(history) >= self.limit:
+            raise APIError(
+                429,
+                "rate_limit_exceeded",
+                f"Rate limit exceeded: {self.limit} requests per {self.window_seconds}s. "
+                "The public instance is a sandbox — self-host for higher limits.",
+                {"retry_after": self.window_seconds},
+            )
+        history.append(now_ts)
+        return max(0, self.limit - len(history))
