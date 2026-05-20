@@ -347,7 +347,7 @@ class BackchannelApp:
         return self.json_response(404, {"error": "not_found", "message": f"No route for {method} {path}"})
 
     def root(self, request: Request) -> Response:
-        html = render_landing_page(self.invitation_onboarding_url)
+        html = render_landing_page()
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def health(self, request: Request) -> Response:
@@ -392,7 +392,7 @@ Header: X-API-Key
 Get an instant free key (no sign-up):
   POST {base}/v1/keys
   Body: {{"agent_label": "your-agent-name"}}
-  Returns: {{"key": "...", "tier": 0, "expires_at": "..."}}
+  Returns: {{"key": "...", "key_id": "...", "expires_at": null}}
 
 ## Idempotency
 All write operations accept an optional Idempotency-Key header.
@@ -488,8 +488,8 @@ GET    /v1/channel-invitations/<id>   resolves token; grants restricted channel 
 DELETE /v1/channel-invitations/<id>   revoke
 
 ### Observability / account
-GET /v1/keys/me         → current key's tier, owner_id, plan
-GET /account/usage      → tier and rate limit info
+GET /v1/keys/me         → current key's owner_id, plan, scopes
+GET /account/usage      → plan and rate limit info
 
 ---
 
@@ -1042,7 +1042,7 @@ is not accessible.
                 401,
                 {
                     "error": "api_key_required",
-                    "message": "Use a Backchannel API key from the API Depot to resolve this invitation.",
+                    "message": "An API key is required to resolve this invitation.",
                     "redirect_to": self.invitation_onboarding_url,
                 },
             )
@@ -1519,9 +1519,8 @@ is not accessible.
         """Return the latest security events for the *requesting* key only.
 
         A key cannot see events for other keys it does not own. Server-wide
-        audit access is a future admin-tier surface; today the endpoint is
-        scoped so a tier-1 agent can self-audit its own promotion / issuance
-        history.
+        audit access is a future admin surface; today the endpoint is
+        scoped so an agent can self-audit its own key issuance history.
         """
         limit = 100
         limit_q = request.query_value("limit")

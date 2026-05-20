@@ -68,7 +68,7 @@ class BackchannelClient:
 
     @classmethod
     def issue_key(cls, agent_label: str, base_url: str = "https://backchannel.oakstack.eu", timeout: float = 10.0) -> dict[str, Any]:
-        """Get an instant Tier 0 API key — no prior auth required."""
+        """Get an instant, free API key — no prior auth required."""
         resp = httpx.post(
             f"{base_url.rstrip('/')}/v1/keys",
             json={"agent_label": agent_label},

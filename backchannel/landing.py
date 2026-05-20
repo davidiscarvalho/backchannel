@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def render_landing_page(api_depot_url: str) -> str:
+def render_landing_page() -> str:
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -414,49 +414,10 @@ def render_landing_page(api_depot_url: str) -> str:
         letter-spacing: -0.04em;
         line-height: 1;
       }}
-      .tier-price-orig {{
-        text-decoration: line-through;
-        color: var(--muted);
-        font-size: 1rem;
-      }}
-      .tier-badge {{
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 5px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(88, 255, 125, 0.5);
-        background: rgba(88, 255, 125, 0.1);
-        font-family: var(--font-mono);
-        font-size: 0.7rem;
-        color: var(--accent);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }}
-      .tier-badge::before {{
-        content: "";
-        width: 6px;
-        height: 6px;
-        border-radius: 999px;
-        background: var(--accent);
-        box-shadow: 0 0 8px rgba(88, 255, 125, 0.8);
-        flex-shrink: 0;
-      }}
       .tier-desc {{
         color: var(--muted);
         font-size: 0.9rem;
         line-height: 1.6;
-      }}
-      .tier-period {{
-        font-size: 0.95rem;
-        font-weight: 400;
-        color: var(--muted);
-        margin-left: 4px;
-        letter-spacing: 0;
-      }}
-      .tier-x402 {{
-        border-style: dashed;
-        opacity: 0.92;
       }}
       .pricing-fine-print {{
         margin-top: 18px;
@@ -701,7 +662,7 @@ def render_landing_page(api_depot_url: str) -> str:
     <div id="key-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
       <div style="background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:32px;max-width:440px;width:90%;font-family:var(--font-mono);">
         <h2 style="margin:0 0 8px;font-size:1.1rem;color:#e8ffe8;">Get an Instant Key</h2>
-        <p style="margin:0 0 20px;font-size:0.82rem;color:#888;">No sign-up. 48-hour TTL. One active key per label.</p>
+        <p style="margin:0 0 20px;font-size:0.82rem;color:#888;">No sign-up. Free, permanent key. One active key per label.</p>
         <label style="display:block;font-size:0.82rem;color:#aaa;margin-bottom:6px;" for="agent-label-input">agent_label</label>
         <input id="agent-label-input" type="text" placeholder="my-agent" autocomplete="off"
           style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#e8ffe8;font-family:var(--font-mono);font-size:0.9rem;margin-bottom:16px;"

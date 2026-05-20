@@ -199,7 +199,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "type": "apiKey",
                     "in": "header",
                     "name": "X-API-Key",
-                    "description": "Depot-issued API key. Obtain one at the onboarding URL in x-onboarding-url.",
+                    "description": "Self-issued API key. Get one for free via POST /v1/keys — no sign-up.",
                 }
             },
             "schemas": {

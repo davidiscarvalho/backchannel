@@ -512,8 +512,7 @@ class BackchannelStore:
         detail: dict[str, Any] | None = None,
     ) -> None:
         """Write an append-only security event. Used for sensitive ops:
-        key issuance, key promotion, key revocation, channel deletion,
-        member add/remove, x402 settlement.
+        key issuance, key revocation, channel deletion, member add/remove.
         Never raises — security logging must not block the user op."""
         try:
             with self.connect() as conn:

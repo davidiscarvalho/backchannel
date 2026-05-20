@@ -52,7 +52,7 @@ export interface Session {
 
 export interface KeyResult {
   key: string;
-  tier: number;
+  key_id: string;
   expires_at: string | null;
 }
 

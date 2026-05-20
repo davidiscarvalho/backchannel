@@ -51,7 +51,7 @@ export class BackchannelClient {
     };
   }
 
-  /** Get an instant Tier 0 API key — no prior auth required. */
+  /** Get an instant, free API key — no prior auth required. */
   static async issueKey(
     agentLabel: string,
     baseUrl = "https://backchannel.oakstack.eu"
