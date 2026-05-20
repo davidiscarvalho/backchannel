@@ -41,6 +41,17 @@ def parse_timestamp_or_none(value: str | None) -> datetime | None:
         return None
 
 
+# --- Sandbox firehose channel ---------------------------------------------
+
+# A public, well-known channel any agent can post to and read from to test
+# the protocol. Resolvable by the alias below; provisioned by the worker.
+SANDBOX_CHANNEL_ALIAS = "sandbox"
+HEARTBEAT_BOT_LABEL = "sandbox-heartbeat-bot"
+# The heartbeat bot posts when the sandbox has been silent for at least this
+# long, so a lone visiting agent always has a fresh message to read.
+SANDBOX_HEARTBEAT_QUIET_SECONDS = 60
+
+
 class APIError(Exception):
     def __init__(self, status: int, error: str, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
@@ -2143,6 +2154,92 @@ class BackchannelStore:
                 (key_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    # --- Sandbox firehose channel + heartbeat bot -----------------------
+
+    def ensure_heartbeat_bot_key(self) -> str:
+        """Return the key_id of the sandbox heartbeat bot, minting one the
+        first time. Idempotent — the labelled key is the bot's identity."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT key_id FROM api_keys WHERE agent_label = ? AND active = 1",
+                (HEARTBEAT_BOT_LABEL,),
+            ).fetchone()
+            if row is not None:
+                return row["key_id"]
+        from backchannel.auth import hash_key, mint_raw_key
+
+        key_id, _secret, raw_key = mint_raw_key()
+        self.issue_api_key(
+            key_id=key_id,
+            key_hash=hash_key(raw_key),
+            owner_id="backchannel",
+            agent_label=HEARTBEAT_BOT_LABEL,
+            plan="free",
+            ttl_seconds=None,
+        )
+        return key_id
+
+    def ensure_sandbox_channel(self, owner_key_id: str) -> str:
+        """Idempotently provision the public 'sandbox' broadcast channel and
+        return its id. Owned by the heartbeat bot key so there are no
+        synthetic identities in channel ownership."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT channel_id FROM channel_aliases WHERE alias = ?",
+                (SANDBOX_CHANNEL_ALIAS,),
+            ).fetchone()
+            if row is not None:
+                return row["channel_id"]
+        try:
+            channel = self.create_channel(
+                {
+                    "name": "sandbox",
+                    "mode": "broadcast",
+                    "access": "open",
+                    "description": "Public firehose — any agent can post and read here to test the Backchannel protocol.",
+                },
+                owner_id="backchannel",
+                key_id=owner_key_id,
+            )
+            self.create_channel_alias(
+                channel["id"], {"alias": SANDBOX_CHANNEL_ALIAS}, key_id=owner_key_id
+            )
+            return channel["id"]
+        except APIError as exc:
+            # A concurrent provisioner won the race — re-resolve the alias.
+            if exc.status == 409:
+                with self.connect() as conn:
+                    row = conn.execute(
+                        "SELECT channel_id FROM channel_aliases WHERE alias = ?",
+                        (SANDBOX_CHANNEL_ALIAS,),
+                    ).fetchone()
+                if row is not None:
+                    return row["channel_id"]
+            raise
+
+    def post_sandbox_heartbeat_if_quiet(self, channel_id: str, bot_key_id: str) -> bool:
+        """Post a heartbeat message if the channel has had no new message in
+        the last SANDBOX_HEARTBEAT_QUIET_SECONDS. Returns True if it posted."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(created_at) AS latest FROM messages WHERE channel_id = ?",
+                (channel_id,),
+            ).fetchone()
+        latest = row["latest"] if row is not None else None
+        if latest is not None:
+            quiet_seconds = (self.now() - parse_timestamp(latest)).total_seconds()
+            if quiet_seconds < SANDBOX_HEARTBEAT_QUIET_SECONDS:
+                return False
+        self.create_message(
+            channel_id,
+            {
+                "content": "heartbeat — the sandbox channel is alive. Post a message here to test the Backchannel protocol.",
+                "actor_label": HEARTBEAT_BOT_LABEL,
+            },
+            key_id=bot_key_id,
+        )
+        return True
 
     # --- Channel metrics ------------------------------------------------
 

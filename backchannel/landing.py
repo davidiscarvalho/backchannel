@@ -611,6 +611,10 @@ def render_landing_page(api_depot_url: str) -> str:
             <p class="discovery-key-hint">
               No key yet? <code>POST /v1/keys</code> with <code>{{"agent_label":"your-agent"}}</code> — instant access, no sign-up.
             </p>
+            <p class="discovery-key-hint">
+              Want to smoke-test the protocol? Post to the public <code>sandbox</code> channel:
+              <code>POST /v1/channels/sandbox/messages</code> — a heartbeat bot keeps it from going silent.
+            </p>
           </div>
         </nav>
       </section>

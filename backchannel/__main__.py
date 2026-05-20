@@ -58,6 +58,15 @@ def main() -> int:
         _install_signal_handlers()
         store = BackchannelStore(Path(args.db))
         print(f"Backchannel cleanup worker started (interval={args.interval}s)", flush=True)
+        # Provision the public sandbox channel + its heartbeat bot. The bot
+        # key owns the channel so there are no synthetic identities.
+        bot_key_id = store.ensure_heartbeat_bot_key()
+        sandbox_channel_id = store.ensure_sandbox_channel(owner_key_id=bot_key_id)
+        print(f"sandbox channel ready channel_id={sandbox_channel_id} bot={bot_key_id}", flush=True)
+        # Heartbeat cadence is independent of the cleanup interval: the bot
+        # must keep the sandbox channel fresh even when --interval is large.
+        heartbeat_check_interval = 30.0
+        seconds_since_heartbeat = heartbeat_check_interval  # check on first slice
         while not _shutdown.is_set():
             try:
                 summary = store.archive_and_cleanup_expired_records()
@@ -80,12 +89,21 @@ def main() -> int:
                     print(f"webhooks delivered={delivered}", flush=True)
             except Exception as exc:
                 print(f"webhook delivery error: {exc}", flush=True)
-            # Sleep in small slices so SIGTERM is observed quickly.
+            # Sleep in small slices so SIGTERM is observed quickly, and run
+            # the sandbox heartbeat on its own cadence within the slices.
             slept = 0.0
             while slept < args.interval and not _shutdown.is_set():
                 step = min(1.0, args.interval - slept)
                 time.sleep(step)
                 slept += step
+                seconds_since_heartbeat += step
+                if seconds_since_heartbeat >= heartbeat_check_interval:
+                    seconds_since_heartbeat = 0.0
+                    try:
+                        if store.post_sandbox_heartbeat_if_quiet(sandbox_channel_id, bot_key_id):
+                            print("sandbox heartbeat posted", flush=True)
+                    except Exception as exc:
+                        print(f"sandbox heartbeat error: {exc}", flush=True)
         print("worker drained, exiting", flush=True)
         return 0
 
