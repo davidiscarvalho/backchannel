@@ -3,7 +3,7 @@
 > From a working repo on your laptop to a published, deployed,
 > end-to-end working product. Every command, every menu, every gotcha.
 
-**Total time:** ~3 hours, broken into 14 sections. Each section is
+**Total time:** ~3 hours, broken into 13 sections. Each section is
 independent and reversible — if a step fails, you have a clean
 restart point.
 
@@ -32,8 +32,7 @@ restart point.
 | 10 | Submit the Claude Code plugin to the marketplace | 20 min |
 | 11 | End-to-end verification (two Claude Code sessions) | 10 min |
 | 12 | Set up monitoring (Grafana scrape of `/metrics`) | 15 min |
-| 13 | Optional — enable x402 / USDC payments | 30 min |
-| 14 | Optional — point your `.well-known` URLs at the new endpoints | 10 min |
+| 13 | Optional — point your `.well-known` URLs at the new endpoints | 10 min |
 
 ---
 
@@ -108,12 +107,7 @@ $LAPTOP> echo "$KEY"
 
 # Use it
 $LAPTOP> curl -s http://localhost:8090/v1/keys/me -H "X-API-Key: $KEY" | jq
-# → { "key_id": "bck_...", "tier": 0, "credit": { ... }, ... }
-
-# Pricing page (F6)
-$LAPTOP> curl -sI http://localhost:8090/pricing | head -3
-# → HTTP/1.1 200 OK
-#   Content-Type: text/html; charset=utf-8
+# → { "key_id": "bck_...", "agent_label": "sanity-guide", ... }
 
 # Result-channel primitive (B2)
 $LAPTOP> POST=$(curl -s -X POST http://localhost:8090/v1/tasks/post-with-result \
@@ -216,7 +210,6 @@ $HETZNER> git pull origin master
 Updating 9306ef0..318a0b7
 Fast-forward
  27 files changed, 4500+ insertions(+), 800+ deletions(-)
- create mode 100644 backchannel/x402.py
  create mode 100644 backchannel/observability.py
  create mode 100644 docker-compose.self-host.yml
  create mode 100644 SELF-HOST.md
@@ -315,13 +308,10 @@ $LAPTOP> curl -s $HOST/llms.txt | head -10
 $LAPTOP> curl -s $HOST/.well-known/ai-manifest.json | jq
 $LAPTOP> curl -s $HOST/.well-known/ai-plugin.json | jq
 
-# 3.3 — pricing page (F6)
-$LAPTOP> curl -s $HOST/pricing | grep -E 'Test|Pro|Scale|x402' | head -4
-
-# 3.4 — metrics (E1)
+# 3.3 — metrics (E1)
 $LAPTOP> curl -s $HOST/metrics | head -10
 
-# 3.5 — mint a real key
+# 3.4 — mint a real key
 $LAPTOP> PROD_KEY=$(curl -s -X POST $HOST/v1/keys \
    -H 'Content-Type: application/json' \
    -d '{"agent_label":"prod-smoke-test"}' | jq -r .key)
@@ -329,7 +319,7 @@ $LAPTOP> echo "$PROD_KEY" > ~/.config/backchannel-prod-smoke.key
 $LAPTOP> chmod 600 ~/.config/backchannel-prod-smoke.key
 $LAPTOP> curl -s $HOST/v1/keys/me -H "X-API-Key: $PROD_KEY" | jq
 
-# 3.6 — round-trip task + result
+# 3.5 — round-trip task + result
 $LAPTOP> POSTED=$(curl -s -X POST $HOST/v1/tasks/post-with-result \
    -H "X-API-Key: $PROD_KEY" -H 'Content-Type: application/json' \
    -d '{"channel":"prod-smoke","content":"ping"}')
@@ -736,7 +726,7 @@ observe in step 9.3):
 ```json
 {
   "name": "backchannel",
-  "description": "Hand work to (or pick up work from) another agent over Backchannel. Atomic claimable task handoff over HTTP. Auto-mints a 48h key on first use.",
+  "description": "Hand work to (or pick up work from) another agent over Backchannel. Atomic claimable task handoff over HTTP. Auto-mints a key on first use.",
   "publisher": "oakstack",
   "homepage": "https://backchannel.oakstack.eu",
   "documentation": "https://backchannel.oakstack.eu/agent-guide",
@@ -971,117 +961,7 @@ In Grafana:
 
 ---
 
-## 13. (Optional) Enable x402 — USDC pay-per-call
-
-Skip this section if you're not ready to take USDC yet. Everything
-above already ships without x402 enabled.
-
-### 13.1. Get a receiving address
-
-Any ERC-20 wallet on Base will do (Coinbase Wallet, Metamask configured
-for Base, Rainbow, etc.). Get the wallet address — `0x…` — and **keep
-the seed phrase off this machine**.
-
-### 13.2. Pick a facilitator
-
-Easiest path: Coinbase's hosted x402 facilitator (see <https://www.x402.org/>
-for current pointers).
-
-Self-host alternative: run your own facilitator (out of scope for this guide).
-
-### 13.3. Write a `PaymentVerifier` against the facilitator
-
-Edit (or create) `backchannel/x402_facilitator.py`:
-
-```python
-"""Real x402 facilitator integration. Replaces NullVerifier in production."""
-import httpx
-from backchannel.x402 import PaymentVerifier, PaymentRequirement
-
-class CoinbaseFacilitatorVerifier(PaymentVerifier):
-    def __init__(self, url: str, api_key: str | None = None):
-        self.url = url.rstrip("/")
-        self.api_key = api_key
-
-    def verify(self, payment_proof: str, requirement: PaymentRequirement) -> bool:
-        headers = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        try:
-            resp = httpx.post(
-                f"{self.url}/verify",
-                headers=headers,
-                json={"proof": payment_proof, "expected": requirement.to_payload()},
-                timeout=10,
-            )
-            return resp.status_code == 200 and resp.json().get("valid") is True
-        except httpx.HTTPError:
-            return False
-```
-
-Then attach it at app start. Easiest place: edit `backchannel/__main__.py`
-inside the `serve` branch, after `create_app(...)`:
-
-```python
-import os
-from backchannel.x402_facilitator import CoinbaseFacilitatorVerifier
-if os.environ.get("BACKCHANNEL_X402_FACILITATOR_URL"):
-    app.x402.config.verifier = CoinbaseFacilitatorVerifier(
-        url=os.environ["BACKCHANNEL_X402_FACILITATOR_URL"],
-        api_key=os.environ.get("BACKCHANNEL_X402_FACILITATOR_KEY"),
-    )
-```
-
-Commit this on master and redeploy.
-
-### 13.4. Set the env vars on the server
-
-```bash
-$HETZNER> sudo nano /opt/backchannel/.env
-```
-
-Add:
-
-```
-BACKCHANNEL_X402_ENABLED=1
-BACKCHANNEL_X402_RECEIVING_ADDRESS=0xYourBaseAddress
-BACKCHANNEL_X402_NETWORK=base-mainnet
-BACKCHANNEL_X402_PRICE_USDC=0.01
-BACKCHANNEL_X402_FACILITATOR_URL=https://<your-facilitator-host>
-BACKCHANNEL_X402_FACILITATOR_KEY=<if-required>
-```
-
-Save. `docker compose up -d` to apply.
-
-### 13.5. Verify the 402 path
-
-```bash
-$LAPTOP> curl -i -X POST https://backchannel.oakstack.eu/v1/keys/x402
-```
-
-**You'll see:**
-```
-HTTP/2 402
-content-type: application/json
-
-{
-  "x402Version": 1,
-  "error": "payment_required",
-  "accepts": [{ "scheme": "exact", "network": "base-mainnet", ... }],
-  ...
-}
-```
-
-### 13.6. Update the landing page
-
-The landing page already shows the x402 tier as "coming soon" (D1).
-After you flip the switch live, edit `backchannel/landing.py` and
-change `"agent-native · coming soon"` to `"agent-native · live"`.
-Commit, push, redeploy.
-
----
-
-## 14. (Optional) Tidy up `.well-known` endpoints
+## 13. (Optional) Tidy up `.well-known` endpoints
 
 You already serve:
 - `/.well-known/ai-manifest.json`
@@ -1118,10 +998,8 @@ proxy_pass for the JSON ones).
 - **MCP registry** PR submitted.
 - **Daily backups** with retention + tested restore.
 - **Prometheus scrape** of `/metrics` in your Grafana.
-- **x402 path** scaffolded — flip the switch when ready.
-- **Pricing page** at `/pricing` with the comparison table.
 - **Status page** at `/status.html`.
-- **Docs site** ready to publish — see step 14 below.
+- **Docs site** ready to publish — see the bonus section below.
 
 ### Bonus — deploy the docs site
 
@@ -1146,10 +1024,9 @@ After this guide, all of these resolve at `https://backchannel.oakstack.eu`:
 | URL | Audience | Auth | What |
 |-----|----------|------|------|
 | `/` | humans | public | Landing page (D1) |
-| `/pricing` | humans | public | Pricing table (F6) |
 | `/status.html` | humans | public | Status page (D4) |
 | `/health` | uptime probes | public | JSON liveness |
-| `/status` | uptime probes | public | JSON status with tier SLAs |
+| `/status` | uptime probes | public | JSON status |
 | `/metrics` | Prometheus | public | text/plain Prom (E1) |
 | `/openapi.json` | agents | public | OpenAPI 3.1 |
 | `/llms.txt` | agents | public | Imperative protocol for LLMs (B4) |
@@ -1167,10 +1044,8 @@ After this guide, all of these resolve at `https://backchannel.oakstack.eu`:
 | `/docs/sla.md` | humans | public | |
 | `/docs/playground` | humans | public | Interactive playground |
 | `/compare` | humans | public | vs alternatives |
-| `POST /v1/keys` | agents | public | Mint Tier-0 key (A3) |
-| `POST /v1/keys/x402` | agents | public/x402 | Mint paid key (F1) |
-| `POST /v1/keys/promote` | agents | key | Upgrade to Tier-1 |
-| `GET /v1/keys/me` | agents | key | Self info + credit |
+| `POST /v1/keys` | agents | public | Mint a free, permanent key (A3) |
+| `GET /v1/keys/me` | agents | key | Self info |
 | `PUT /v1/keys/me/scopes` | agents | key | |
 | `POST /v1/channels` | agents | key | |
 | `GET /v1/channels/{id}` | agents | key | |
@@ -1204,7 +1079,6 @@ After this guide, all of these resolve at `https://backchannel.oakstack.eu`:
 | `POST /v1/tasks/post-with-result` | agents | key | result-channel (B2) |
 | `POST /v1/tasks/{id}/result` | agents | key | publish result (B2) |
 | `GET /v1/tasks/{id}/result` | agents | key | await result (B2) |
-| `GET /v1/pricing/estimate` | agents | public | |
 | `POST /v1/sessions` | agents | key | DAG |
 | `GET /v1/sessions` | agents | key | |
 | `GET /v1/sessions/{id}` | agents | key | |
