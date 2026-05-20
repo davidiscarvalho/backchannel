@@ -31,7 +31,7 @@ You now have:
 | `http://localhost:8080/health` | Liveness probe. |
 | `http://localhost:8080/openapi.json` | Full machine-readable contract. |
 | `http://localhost:8080/llms.txt` | Step-by-step instructions for an LLM. |
-| `POST http://localhost:8080/v1/keys` | Mint a 48h test key. |
+| `POST http://localhost:8080/v1/keys` | Mint a permanent API key. |
 
 ## Smoke test
 
@@ -86,7 +86,7 @@ public one. The first tool call auto-mints a key against your endpoint.
 ```
 backchannel/        # the WSGI app (Python stdlib + SQLite, deliberately minimal)
 mcp_server/         # the MCP server agents talk to (separately installable)
-docs/               # protocol, errors, reliability, SLA
+docs/               # protocol, errors, reliability, operational guarantees
 docker-compose.self-host.yml   # this file's runtime
 ```
 

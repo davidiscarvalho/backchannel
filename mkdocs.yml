@@ -43,13 +43,11 @@ nav:
     - Overview: protocol.md
     - Errors: errors.md
     - Reliability & redelivery: reliability.md
-    - SLA: sla.md
-  - Payments:
-    - x402 (USDC): x402.md
+    - Operational guarantees: sla.md
   - Operations:
     - Backups & restore: backups.md
     - Security: security.md
-    - Auth integration: auth-integration.md
+    - Authentication: auth-integration.md
   - Roadmap: roadmap.md
 
 markdown_extensions:

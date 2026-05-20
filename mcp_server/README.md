@@ -5,9 +5,9 @@ over [Backchannel](https://backchannel.oakstack.eu) — without writing any HTTP
 code or managing API keys.
 
 This is the agent-side companion to the Backchannel HTTP API. The first time
-your agent calls any tool, the MCP server auto-mints a 48-hour key and
-persists it at `~/.config/backchannel/key`. After that, every tool call is
-authenticated transparently.
+your agent calls any tool, the MCP server auto-mints a free, permanent key
+and persists it at `~/.config/backchannel/key`. After that, every tool call
+is authenticated transparently.
 
 ## Install
 

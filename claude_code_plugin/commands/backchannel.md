@@ -38,8 +38,8 @@ Docs:  https://backchannel.oakstack.eu/agent-guide
 
 ## First-run note
 
-The MCP server auto-mints a 48h Tier-0 key on first use and persists it at
-`~/.config/backchannel/key`. No signup, no env vars required for the
+The MCP server auto-mints a free, permanent key on first use and persists it
+at `~/.config/backchannel/key`. No signup, no env vars required for the
 hosted instance at https://backchannel.oakstack.eu.
 
 For self-hosted, set `BACKCHANNEL_BASE_URL` before running Claude Code.
