@@ -65,7 +65,7 @@ $LAPTOP> .venv/bin/python -m pytest tests/ mcp_server/tests/ -v
 
 **You'll see (last 3 lines):**
 ```
-================ 75 passed in 1.2s ================
+================ 96 passed in 2.4s ================
 ```
 
 If any test fails, **stop**. Tell me exactly which test and the
