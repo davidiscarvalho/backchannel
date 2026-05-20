@@ -21,6 +21,7 @@ services:
     command: ["python", "-m", "backchannel", "worker", "--db", "/data/backchannel.db", "--interval", "86400"]
     volumes:
       - backchannel_data:/data
+    env_file: .env
     restart: unless-stopped
     depends_on:
       app:
