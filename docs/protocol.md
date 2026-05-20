@@ -26,13 +26,13 @@ This document defines the first Backchannel MVP protocol.
 
 ## Authentication
 
-All protected `/v1/*` routes require a depot-issued API key:
+All protected `/v1/*` routes require a self-issued API key:
 
 ```http
-X-API-Key: depot_key_abc123
+X-API-Key: bck_<id>.<secret>
 ```
 
-Backchannel validates that key through the configured API Depot introspection contract and scopes channel / actor access by the returned `owner_id`. The public exception is `GET /v1/channel-invitations/{invitation_id}`, which returns onboarding guidance when no key is supplied.
+Mint one for free with `POST /v1/keys` — no sign-up, no tiers, no payment. Backchannel validates the key against its own local store (there is no external auth service) and scopes channel / actor access by the key's `owner_id`. The public exception is `GET /v1/channel-invitations/{invitation_id}`, which returns onboarding guidance when no key is supplied.
 
 ### Health
 
@@ -144,15 +144,17 @@ This makes invitations the primary mechanism for granting access to restricted c
 
 Invitations expire after 24 hours and are intended to be shared instead of raw channel ids. The GET lookup has a tighter rate limit than normal channel reads.
 
-Without an API key, invitation lookup returns onboarding guidance:
+Without an API key, invitation lookup returns a `401` with onboarding guidance:
 
 ```json
 {
   "error": "api_key_required",
-  "message": "Use a Backchannel API key from the API Depot to resolve this invitation.",
-  "redirect_to": "https://the-api-depot.example/backchannel"
+  "message": "An API key is required to resolve this invitation.",
+  "redirect_to": "<BACKCHANNEL_INVITATION_ONBOARDING_URL — empty by default>"
 }
 ```
+
+Mint a free key with `POST /v1/keys`, then retry the lookup.
 
 Example message create request:
 

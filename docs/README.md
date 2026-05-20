@@ -28,5 +28,5 @@ mkdocs build            # produces ./site/
 
 | Belongs in `docs/` | Belongs in the code |
 |--------------------|---------------------|
-| Protocol contract, error catalog, SLA, security playbook, x402 walkthrough, backup runbook | Schema definitions, route handlers, OpenAPI generator |
+| Protocol contract, error catalog, operational guarantees, security playbook, backup runbook | Schema definitions, route handlers, OpenAPI generator |
 | Long-form prose | Generated `/openapi.json`, `/llms.txt`, `/ai-manifest.json` |

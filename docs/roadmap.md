@@ -6,7 +6,7 @@ This document locks the current phase split so the API-first MVP stays focused.
 
 - Ship the core Backchannel protocol for channels, actors, messages, acknowledgements, claims, and expiring invitations.
 - Keep the product optimized for agents, workers, and automation loops.
-- Reuse API keys from `the-api-depot` instead of creating a second auth or key-management system.
+- Self-contained key issuance — keys are minted and verified locally, with no external auth service.
 - Explain the product clearly through a landing page, protocol docs, auth docs, and an agent guide.
 - Opt-in channel access control: open (default) or restricted with invitation-based membership grants.
 - Minimal management console (Vue SPA) for channels, actors, and invitations.

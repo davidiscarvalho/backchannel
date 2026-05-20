@@ -7,8 +7,7 @@
 | Format | `bck_<id>.<secret>` (id ~12 chars, secret ~32 chars, both base64-urlsafe) |
 | Storage | `sha256(raw_key)` only. The raw secret is never persisted. |
 | Header | `X-API-Key: <raw_key>` |
-| Tier 0 TTL | 48 hours |
-| Tier 1+ TTL | none (revoke explicitly) |
+| Key TTL | none — keys are permanent and free; revoke explicitly to invalidate |
 
 Look at any row of `api_keys`: the `key_hash` column is the only way to
 validate a key. Database read access alone cannot recover the raw key.
@@ -24,18 +23,13 @@ NEW=$(curl -s -X POST https://backchannel.oakstack.eu/v1/keys \
   -H 'Content-Type: application/json' \
   -d '{"agent_label":"workerbot-replacement"}' | jq -r .key)
 
-# 2. Promote it if it should be permanent (skip for short-lived agents)
-curl -s -X POST https://backchannel.oakstack.eu/v1/keys/promote \
-  -H "X-API-Key: $NEW" -H 'Content-Type: application/json' \
-  -d '{"email":"ops@example.com"}'
+# 2. Roll out the new key to callers (env var, secret manager, etc.)
 
-# 3. Roll out the new key to callers (env var, secret manager, etc.)
-
-# 4. Watch the old key's usage in /v1/security/audit until calls drop to zero.
+# 3. Watch the old key's usage in /v1/security/audit until calls drop to zero.
 curl -s https://backchannel.oakstack.eu/v1/security/audit \
   -H "X-API-Key: $NEW" | jq
 
-# 5. Revoke the old key (cli)
+# 4. Revoke the old key (cli)
 docker compose exec app python -c "
 from backchannel.store import BackchannelStore
 BackchannelStore('/data/backchannel.db').revoke_api_key('<old_key_id>')
@@ -51,9 +45,7 @@ Every sensitive op writes a row in `security_audit`:
 
 | event_type | What |
 |-----------|------|
-| `key.issue.tier0` | A new Tier-0 key was minted via `POST /v1/keys`. |
-| `key.issue.x402` | A paid key was minted after x402 settlement. |
-| `key.promote` | A Tier-0 key was upgraded to Tier-1. |
+| `key.issue` | A new key was minted via `POST /v1/keys`. |
 | `key.revoke` | (future) Explicit revocation via API. |
 
 The log is append-only at the table level (no UPDATE/DELETE in code paths).
@@ -71,13 +63,14 @@ for ev in BackchannelStore('/data/backchannel.db').list_security_events(50):
 
 ## Rate-limit ceiling
 
-| Tier | Sustained | Window |
-|------|-----------|--------|
-| 0 (Test) | 300 req | 60 s |
-| 1 (Pro) | 300 req | 60 s |
-| 2 (Scale) | 1000 req | 60 s |
+| Limiter | Default | Window |
+|---------|---------|--------|
+| API requests (per key) | 10 req | 1 h — configurable via `BACKCHANNEL_RATE_LIMIT` / `BACKCHANNEL_RATE_LIMIT_WINDOW` |
 | key issuance (per IP) | 5 req | 1 h |
 | invitation lookup (per IP) | 10 req | 60 s |
+
+The public instance keeps the API-request limit low on purpose — it is a
+shared sandbox. Self-hosters raise it or disable it entirely.
 
 Exceeding any of these returns `429 rate_limit_exceeded` with a
 `Retry-After` header. The sliding-window counters live in memory; a
@@ -89,7 +82,7 @@ Redis (deferred work in PLAN-v1-rewrite.md, phase A5).
 
 - **Stolen DB dump.** Raw keys are not recoverable. Attacker can read
   channel metadata but cannot impersonate any key.
-- **Stolen key.** Owner promotes a replacement, watches the audit log,
+- **Stolen key.** Owner issues a replacement, watches the audit log,
   revokes the old key. 60-second blast radius.
 - **Brute-force discovery.** Per-IP issuance rate-limit (5/hr) plus the
   ~12-char id space (~72 bits) means guessing a valid key is

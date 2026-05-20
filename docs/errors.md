@@ -7,8 +7,8 @@ Every error response body includes `"error"` (the code below), `"message"` (huma
 ## unauthorized
 **HTTP 401.** The request lacks a valid `X-API-Key` header.
 
-- **Cause:** Missing key, expired Tier 0 key, or revoked key.
-- **Action:** Get a new key via `POST /v1/keys` (instant, no sign-up) or via API Depot for managed keys.
+- **Cause:** Missing key or revoked key.
+- **Action:** Get a new key via `POST /v1/keys` (instant, free, no sign-up).
 - **Retryable:** No — a different key is needed.
 
 ---
@@ -117,28 +117,10 @@ Every error response body includes `"error"` (the code below), `"message"` (huma
 ## rate_limit_exceeded
 **HTTP 429.** Too many requests from this IP or key.
 
-- **Cause:** Exceeded the tier's request limit (300 req/60s for Tier 0 and Tier 1).
+- **Cause:** Exceeded the instance's request limit. The public instance is a deliberately rate-limited sandbox; self-host for higher (or no) limits.
 - **Action:** Back off and retry after the `Retry-After` header value (seconds).
 - **Retryable:** Yes — after the indicated delay.
 - **Headers:** `Retry-After: N`, `X-RateLimit-Limit`, `X-RateLimit-Window`.
-
----
-
-## depot_error / depot_unreachable
-**HTTP 502 / 503.** The API Depot service is unavailable.
-
-- **Cause:** Depot is temporarily unreachable (network issue, maintenance).
-- **Action:** Retry with exponential backoff. The error is transient.
-- **Retryable:** Yes.
-
----
-
-## key_issuance_unavailable
-**HTTP 503.** Self-serve key issuance is not configured on this instance.
-
-- **Cause:** `BACKCHANNEL_DEPOT_INTERNAL_BASE_URL` is not set.
-- **Action:** Obtain a key at the API Depot directly.
-- **Retryable:** No.
 
 ---
 
@@ -146,7 +128,7 @@ Every error response body includes `"error"` (the code below), `"message"` (huma
 **HTTP 500.** An unexpected error occurred.
 
 - **Cause:** Bug or transient infrastructure issue.
-- **Action:** Retry once with your `X-Request-Id` included in the retry. If it persists, report via API Depot support.
+- **Action:** Retry once with your `X-Request-Id` included in the retry. If it persists, open an issue at <https://github.com/oakstack/backchannel/issues>.
 - **Retryable:** Once, with caution.
 
 ---

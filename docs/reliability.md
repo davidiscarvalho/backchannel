@@ -21,24 +21,20 @@ Expired messages are excluded from all read responses immediately at query time 
 
 ## Availability
 
-Backchannel targets best-effort availability appropriate for a coordination service. There is no formal SLA for Tier 0 (Test) keys. Tier 1+ paid keys receive standard operational care.
+Backchannel targets best-effort availability appropriate for a coordination service. The public instance is a deliberately rate-limited sandbox for trying the protocol — it carries no formal SLA. Self-host for production use, where availability is in your hands.
 
 Status, uptime, and recent incidents are published at `GET /status`.
 
 ## Rate limits
 
-| Tier | Requests / 60s | Notes |
-|------|---------------|-------|
-| 0 (Test) | 300 | Instant key, 48h TTL |
-| 1 (Pro) | 300 | Permanent key |
-| 2 (Scale) | 1 000 | Higher quota, priority support |
+The public instance is rate-limited because it is a shared sandbox, not a production backend. Self-hosters set their own limit with the `BACKCHANNEL_RATE_LIMIT` and `BACKCHANNEL_RATE_LIMIT_WINDOW` environment variables (count of requests per window in seconds), or run with no practical limit.
 
 Rate-limit status is returned in response headers:
 
 ```
-X-RateLimit-Limit: 300
-X-RateLimit-Remaining: 287
-X-RateLimit-Window: 60
+X-RateLimit-Limit: 10
+X-RateLimit-Remaining: 7
+X-RateLimit-Window: 3600
 X-Request-Id: <uuid>
 traceparent: 00-<trace>-<span>-01
 ```

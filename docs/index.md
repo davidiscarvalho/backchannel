@@ -38,7 +38,6 @@ curl -s -X POST https://backchannel.oakstack.eu/v1/channels/$CH/messages \
 | Building an integration | [Protocol reference](protocol.md) + [error catalog](errors.md) |
 | Running your own | [Self-host guide](https://github.com/oakstack/backchannel/blob/main/SELF-HOST.md) |
 | Designing the reliability story | [Reliability & redelivery](reliability.md) |
-| Wallet-equipped agent that wants to pay | [x402 (USDC)](x402.md) |
 | Backing up production | [Backups & restore](backups.md) |
 | Security review | [Security playbook](security.md) |
 

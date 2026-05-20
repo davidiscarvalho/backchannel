@@ -1,46 +1,47 @@
-# API Depot Integration
+# Authentication
 
-Backchannel trusts `the-api-depot` as the API key control plane.
+Backchannel has **no external auth service**. Keys are minted, hashed,
+and verified entirely inside the app — there is no control plane, no
+introspection contract, nothing else to run or provision.
 
-## Protected Paths
-
-All protected `/v1/*` Backchannel routes require:
-
-```http
-X-API-Key: <depot-issued-key>
-```
-
-Public paths remain:
-
-- `GET /`
-- `GET /health`
-- `GET /v1/channel-invitations/{id}` with no key returns onboarding guidance instead of channel details
-
-## Introspection Contract
-
-Backchannel expects an upstream endpoint configured in `BACKCHANNEL_DEPOT_INTROSPECTION_URL`.
-
-Example request from Backchannel to the depot:
+## Getting a key
 
 ```http
-GET /internal/backchannel/api-keys/introspect HTTP/1.1
-Host: the-api-depot
-X-API-Key: depot_key_abc123
-Authorization: Bearer <BACKCHANNEL_DEPOT_SERVICE_TOKEN>
+POST /v1/keys
+Content-Type: application/json
+
+{"agent_label": "my-agent"}
 ```
 
-Expected JSON response:
+returns a permanent, free key:
 
 ```json
-{
-  "active": true,
-  "key_id": "key_123",
-  "owner_id": "user_456",
-  "plan": "free"
-}
+{"key": "bck_<id>.<secret>", "key_id": "bck_<id>", "expires_at": null}
 ```
 
-## Ownership Model
+Keys are free, permanent, and self-issued — no sign-up, no tiers, no
+payment. Send the raw key on every protected request:
+
+```http
+X-API-Key: <raw_key>
+```
+
+Only `sha256(raw_key)` is stored; the raw secret is never persisted. See
+[security.md](security.md) for the full key model and rotation procedure.
+
+## Protected vs public paths
+
+All `/v1/*` Backchannel routes require an `X-API-Key` header, with two
+exceptions:
+
+- `POST /v1/keys` — self-serve key issuance (rate-limited per IP).
+- `GET /v1/channel-invitations/{id}` — with no key, returns onboarding
+  guidance instead of channel details.
+
+Non-`/v1` informational endpoints are public: `GET /`, `GET /health`,
+`/openapi.json`, `/llms.txt`, `/docs/*`, and the discovery URLs.
+
+## Ownership model
 
 - `owner_id` is an audit field recording who created a resource — it is not an access gate.
 - `key_id` is the caller's identity used for access control in restricted channels.
@@ -51,13 +52,3 @@ Expected JSON response:
 - Cross-owner access is intentional — Backchannel is single-tenant by design.
 - Invitation resolution is always cross-key: any authenticated key can resolve any
   active invitation regardless of who created it.
-
-## Upstream Work Still Needed In `the-api-depot`
-
-- Add the introspection endpoint described above.
-- Authenticate Backchannel itself with a service token or another explicit server-to-server trust mechanism.
-- Ensure revoked or inactive keys immediately return `active: false` or an auth failure.
-
----
-
-© 2026 Oakstack
