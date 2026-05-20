@@ -643,7 +643,7 @@ Recovery path:
         <tr><td>Protocol &amp; features</td>
             <td class="yes">identical</td><td class="yes">identical</td></tr>
         <tr><td>Price</td>
-            <td class="yes">€0</td><td>Free → €9.99/mo Pro → €39.99/mo Scale → USDC/x402</td></tr>
+            <td class="yes">€0</td><td>Free 48h → €9.99/mo Pro → €39.99/mo Scale → $5 / 6k credits via x402<br><span style="opacity:0.7;font-size:0.85em">(launch — Pro/Scale rise to €19/€49 on 2026-08-15)</span></td></tr>
         <tr><td>Setup time</td>
             <td>~10 min (docker compose)</td><td>60 s (POST /v1/keys)</td></tr>
         <tr><td>Public address</td>
@@ -746,19 +746,22 @@ Recovery path:
           <tr>
             <td><strong>Price</strong></td>
             <td class="tier-price">Free</td>
-            <td class="tier-price">€9.99<span class="small">/mo</span></td>
-            <td class="tier-price">€39.99<span class="small">/mo</span></td>
-            <td class="tier-price tier-x402">USDC<span class="small">/call</span></td>
+            <td class="tier-price">€9.99<span class="small">/mo<br><span style="opacity:0.7;font-weight:400">rises to €19 on 2026-08-15</span></span></td>
+            <td class="tier-price">€39.99<span class="small">/mo<br><span style="opacity:0.7;font-weight:400">rises to €49 on 2026-08-15</span></span></td>
+            <td class="tier-price tier-x402">$5<span class="small">/ 6,000 credits<br><span style="opacity:0.7;font-weight:400">~$0.00083 / op</span></span></td>
           </tr>
           <tr><td><strong>Audience</strong></td>
             <td>Evaluation</td><td>Single agent / small team</td>
             <td>Agent swarms</td><td>Wallet-equipped agents</td></tr>
           <tr><td><strong>Key lifetime</strong></td>
             <td>48 hours</td><td>Permanent</td>
-            <td>Permanent</td><td>Permanent (per settlement)</td></tr>
-          <tr><td><strong>Rate limit</strong></td>
+            <td>Permanent</td><td>Permanent until credits run out</td></tr>
+          <tr><td><strong>Rate limit / volume</strong></td>
             <td>300 req/min</td><td>300 req/min</td>
-            <td>1000 req/min</td><td>per-call billed</td></tr>
+            <td>1000 req/min</td><td>6,000 metered ops per $5 pack</td></tr>
+          <tr><td><strong>What costs a credit (x402 only)</strong></td>
+            <td>—</td><td>—</td><td>—</td>
+            <td>POST a message; claim a message. Reads, acks, releases, heartbeats are free.</td></tr>
           <tr><td><strong>Channels</strong></td>
             <td class="yes">unlimited</td><td class="yes">unlimited</td>
             <td class="yes">unlimited</td><td class="yes">unlimited</td></tr>
@@ -793,8 +796,9 @@ Recovery path:
       </table>
 
       <p class="small">
-        Launch pricing: Pro and Scale are free during the launch window.
-        x402 is opt-in per instance — see
+        <strong>Launch pricing on Pro &amp; Scale runs through 2026-08-15.</strong>
+        Subscribe now and lock in €9.99 / €39.99 — anyone who signs up after
+        that date pays €19 / €49. x402 is opt-in per instance — see
         <a href="/docs/x402.md">docs/x402.md</a> for facilitator setup.
       </p>
 
@@ -1273,8 +1277,18 @@ is not accessible.
         )
         return self.json_response(201, invitation)
 
+    def _debit_x402_op(self, request: Request) -> None:
+        """If the caller's key is on the x402 plan, debit one metered op
+        from its credit balance. Raises 402 insufficient_credit when the
+        balance is too low — the agent must top up via POST /v1/keys/x402."""
+        auth = request.auth
+        if auth is None or auth.plan != "x402":
+            return
+        self.store.debit_credit_micros(auth.key_id, self.x402.config.per_op_micros())
+
     def create_message(self, request: Request, identifier: str) -> Response:
         self._require_scope(request.auth, "messages:write")
+        self._debit_x402_op(request)
         envelope = self.store.create_message(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
@@ -1318,6 +1332,7 @@ is not accessible.
 
     def claim_message(self, request: Request, message_id: str) -> Response:
         self._require_scope(request.auth, "messages:claim")
+        self._debit_x402_op(request)
         payload = self.store.claim_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
         return self.json_response(200, payload)
 
@@ -1397,13 +1412,17 @@ is not accessible.
         )
 
     def issue_key_x402(self, request: Request) -> Response:
-        """x402-paid key issuance.
+        """x402-paid key issuance — pack pricing.
 
-        Agents call this with no auth. If x402 is configured, the first call
-        returns 402 with the payment requirement. The agent settles in USDC,
-        retries with the X-PAYMENT header, and on successful verification
-        we mint a Tier-1 key with a credit balance — no signup, no card,
-        no human in the loop.
+        Agents call this with no auth. A 402 response advertises the pack
+        price (default $5 = 6,000 metered-op credits). After USDC settlement,
+        the agent retries with X-PAYMENT and receives a Tier-1 key whose
+        credit_balance_micros equals the pack value in USDC micros. Each
+        metered op (message creation, claim) debits per_op_micros
+        (pack_usdc / pack_credits ≈ $0.00083 default).
+
+        Single on-chain settlement per pack, not per call — the only way the
+        unit economics work given gas + facilitator fees.
         """
         if not self.x402.is_active():
             raise APIError(
@@ -1413,16 +1432,32 @@ is not accessible.
             )
         payment_header = request.headers.get("X-Payment") or request.headers.get("X-PAYMENT")
         resource = f"{self.base_url or ''}/v1/keys/x402".lstrip("/")
-        decision = self.x402.evaluate(resource=resource, payment_header=payment_header)
-        if decision.status == 402:
-            body = self.x402.build_402_body(decision.requirement or PaymentRequirement())
-            if decision.error:
-                body["error_detail"] = decision.error
-            resp = Response(status=402, body=json.dumps(body).encode("utf-8"))
-            return resp
-        # Verified — mint a paid key + credit the payment.
+        cfg = self.x402.config
+        pack_requirement = PaymentRequirement(
+            network=cfg.network,
+            max_amount_required=cfg.pack_usdc,
+            pay_to=cfg.pay_to_address,
+            resource=resource,
+            description=(
+                f"Backchannel — {cfg.pack_credits} metered-op credits "
+                f"(${cfg.pack_usdc} USDC, ~${float(cfg.pack_usdc)/cfg.pack_credits:.5f}/call)"
+            ),
+            extra={
+                "pack_credits": cfg.pack_credits,
+                "per_op_usdc_micros": cfg.per_op_micros(),
+            },
+        )
+        if not payment_header:
+            body = self.x402.build_402_body(pack_requirement)
+            return Response(status=402, body=json.dumps(body).encode("utf-8"))
+        if not cfg.verifier.verify(payment_header, pack_requirement):
+            body = self.x402.build_402_body(pack_requirement)
+            body["error_detail"] = "payment_verification_failed"
+            return Response(status=402, body=json.dumps(body).encode("utf-8"))
+        settlement_id = f"x402-{uuid.uuid4().hex[:16]}"
+        # Verified — mint a paid key + credit the pack.
         key_id, _secret, raw_key = mint_raw_key()
-        label = f"x402-{decision.settlement_id or uuid.uuid4().hex[:12]}"
+        label = f"x402-{settlement_id}"
         record = self.store.issue_api_key(
             key_id=key_id,
             key_hash=hash_key(raw_key),
@@ -1431,21 +1466,22 @@ is not accessible.
             tier=1,
             plan="x402",
         )
-        # Convert the priced amount to USDC micros (e.g. "0.01" → 10_000).
         try:
-            amount_micros = int(round(float(decision.requirement.max_amount_required) * 1_000_000))  # type: ignore[union-attr]
+            pack_micros = int(round(float(cfg.pack_usdc) * 1_000_000))
         except (TypeError, ValueError):
-            amount_micros = 0
-        if amount_micros > 0:
-            self.store.add_credit_micros(key_id, amount_micros)
+            pack_micros = 0
+        if pack_micros > 0:
+            self.store.add_credit_micros(key_id, pack_micros)
         self.store.record_security_event(
             event_type="key.issue.x402",
             subject_key_id=key_id,
             remote_addr=request.remote_addr,
             detail={
-                "settlement_id": decision.settlement_id,
-                "amount_micros": amount_micros,
-                "network": decision.requirement.network if decision.requirement else None,
+                "settlement_id": settlement_id,
+                "pack_usdc": cfg.pack_usdc,
+                "pack_credits": cfg.pack_credits,
+                "credit_micros_applied": pack_micros,
+                "network": cfg.network,
             },
         )
         return self.json_response(
@@ -1455,9 +1491,11 @@ is not accessible.
                 "key_id": key_id,
                 "tier": 1,
                 "plan": "x402",
-                "settlement_id": decision.settlement_id,
+                "settlement_id": settlement_id,
                 "expires_at": record["expires_at"],
-                "credit_micros_applied": amount_micros,
+                "credit_micros_applied": pack_micros,
+                "pack_credits": cfg.pack_credits,
+                "per_op_micros": cfg.per_op_micros(),
             },
         )
 
@@ -1736,44 +1774,68 @@ is not accessible.
 
     def pricing_estimate(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
+        cfg = self.x402.config
         tiers = [
             {
                 "tier": 0,
                 "name": "Test",
-                "description": "Instant key, no sign-up required. 48-hour TTL. One active key per agent_label.",
-                "price_eur_monthly": None,
-                "current_price_eur_monthly": 0,
-                "launch_discount": True,
-                "launch_discount_label": "free for limited time",
+                "description": "Instant key, no sign-up. 48-hour TTL. One active key per agent_label.",
+                "price_eur_monthly": 0,
+                "rate_limit_per_minute": 300,
                 "obtain_url": f"{base}/v1/keys",
                 "obtain_method": "POST /v1/keys with {\"agent_label\": \"<name>\"}",
             },
             {
                 "tier": 1,
-                "name": "Free",
-                "description": "Permanent key. Standard rate limits. Managed via API Depot.",
+                "name": "Pro",
+                "description": "Permanent key. 300 req/min. Single agent or small team.",
                 "price_eur_monthly": 9.99,
-                "current_price_eur_monthly": 0,
-                "launch_discount": True,
-                "launch_discount_label": "free for limited time",
-                "obtain_url": self.invitation_onboarding_url or f"{base}/v1/keys/promote",
-                "obtain_method": "Sign up at API Depot or promote a Tier 0 key via POST /v1/keys/promote",
+                "price_eur_monthly_after_launch": 19,
+                "launch_pricing": True,
+                "launch_pricing_ends": "2026-08-15",
+                "rate_limit_per_minute": 300,
+                "obtain_url": f"{base}/v1/billing/checkout",
+                "obtain_method": "POST /v1/billing/checkout with {\"tier\": \"pro\"}",
             },
             {
                 "tier": 2,
-                "name": "Pro",
-                "description": "High rate limits. Team quotas. Priority support.",
+                "name": "Scale",
+                "description": "1000 req/min. Team quotas. 24h support SLA.",
                 "price_eur_monthly": 39.99,
-                "current_price_eur_monthly": 0,
-                "launch_discount": True,
-                "launch_discount_label": "free for limited time",
-                "obtain_url": self.invitation_onboarding_url,
-                "obtain_method": "Sign up at API Depot and select Pro tier",
+                "price_eur_monthly_after_launch": 49,
+                "launch_pricing": True,
+                "launch_pricing_ends": "2026-08-15",
+                "rate_limit_per_minute": 1000,
+                "obtain_url": f"{base}/v1/billing/checkout",
+                "obtain_method": "POST /v1/billing/checkout with {\"tier\": \"scale\"}",
+            },
+            {
+                "tier": 1,
+                "name": "x402 Pack",
+                "description": (
+                    f"USDC pack on {cfg.network}. ${cfg.pack_usdc} = "
+                    f"{cfg.pack_credits} metered-op credits "
+                    f"(~${float(cfg.pack_usdc)/cfg.pack_credits:.5f} per call). "
+                    "Message creates + claims debit one credit; reads, acks, "
+                    "releases, heartbeats are free."
+                ),
+                "plan": "x402",
+                "pack_usdc": cfg.pack_usdc,
+                "pack_credits": cfg.pack_credits,
+                "per_op_micros": cfg.per_op_micros(),
+                "network": cfg.network,
+                "obtain_url": f"{base}/v1/keys/x402",
+                "obtain_method": "POST /v1/keys/x402 → 402 → settle USDC → retry with X-PAYMENT",
             },
         ]
         return self.json_response(200, {
             "tiers": tiers,
-            "note": "Launch discount active — all paid tiers are free for a limited time. Check this endpoint for updates.",
+            "launch_pricing_ends": "2026-08-15",
+            "note": (
+                "Launch pricing on Pro and Scale runs through 2026-08-15. "
+                "Lock in €9.99 / €39.99 now; afterwards the rates are €19 / €49. "
+                "x402 is opt-in per instance — packs apply only when x402 is enabled."
+            ),
         })
 
     # --- Sessions (item19) ---

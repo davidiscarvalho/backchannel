@@ -81,8 +81,9 @@ class CreditLedgerHTTPTests(unittest.TestCase):
             enabled=True,
             pay_to_address="0xPAY",
             network="base-mainnet",
-            price_per_request_usdc="0.05",  # 50_000 micros
             verifier=StaticTestVerifier(accepted_proof="proof_ok"),
+            pack_usdc="5.00",      # 5_000_000 micros credited per pack
+            pack_credits=6000,
         )
 
     def tearDown(self) -> None:
@@ -110,17 +111,19 @@ class CreditLedgerHTTPTests(unittest.TestCase):
         status_code = int(str(holder["status"]).split()[0])
         return status_code, json.loads(body_bytes.decode("utf-8"))
 
-    def test_x402_mint_credits_key_with_paid_amount(self) -> None:
+    def test_x402_mint_credits_key_with_pack_amount(self) -> None:
         status, paid = self._request("POST", "/v1/keys/x402", headers={"X-PAYMENT": "proof_ok"})
         self.assertEqual(status, 201)
-        self.assertEqual(paid["credit_micros_applied"], 50_000)
+        # A $5 pack credits 5_000_000 USDC micros.
+        self.assertEqual(paid["credit_micros_applied"], 5_000_000)
+        self.assertEqual(paid["pack_credits"], 6000)
 
         # keys/me should reflect the credit
         status, me = self._request("GET", "/v1/keys/me", headers={"X-API-Key": paid["key"]})
         self.assertEqual(status, 200)
         self.assertIn("credit", me)
-        self.assertEqual(me["credit"]["balance_usdc_micros"], 50_000)
-        self.assertEqual(me["credit"]["balance_usdc"], "0.050000")
+        self.assertEqual(me["credit"]["balance_usdc_micros"], 5_000_000)
+        self.assertEqual(me["credit"]["balance_usdc"], "5.000000")
 
     def test_keys_me_shows_zero_credit_for_free_key(self) -> None:
         status, free = self._request("POST", "/v1/keys", body={"agent_label": "free-key"})

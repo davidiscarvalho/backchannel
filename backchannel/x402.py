@@ -30,9 +30,18 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
-DEFAULT_PRICE_USDC = "0.01"  # per request, when no per-route price is set
+DEFAULT_PRICE_USDC = "0.01"  # legacy: per-request when packs disabled
 DEFAULT_NETWORK = "base-mainnet"
 DEFAULT_ASSET = "USDC"
+
+# Credit-pack defaults. One pack purchase via /v1/keys/x402 mints a key
+# with `pack_credits` metered ops in its credit_balance. One metered op
+# (message creation, claim) debits `pack_usdc * 1_000_000 / pack_credits`
+# micros from the balance. Pack pricing makes the per-call settlement
+# economics work (single on-chain transfer per pack, not per call) and
+# gives buyers volume discount room.
+DEFAULT_PACK_USDC = "5.00"
+DEFAULT_PACK_CREDITS = 6000
 
 
 # --- Verifier protocol ----------------------------------------------------
@@ -116,9 +125,16 @@ class X402Config:
     verifier: PaymentVerifier = field(default_factory=NullVerifier)
     # Map of resource path → price override (string USDC amount).
     price_overrides: dict[str, str] = field(default_factory=dict)
+    # Credit pack: one settlement mints N metered-op credits.
+    pack_usdc: str = DEFAULT_PACK_USDC
+    pack_credits: int = DEFAULT_PACK_CREDITS
 
     @classmethod
     def from_env(cls) -> "X402Config":
+        try:
+            pack_credits = int(os.environ.get("BACKCHANNEL_X402_PACK_CREDITS", str(DEFAULT_PACK_CREDITS)))
+        except ValueError:
+            pack_credits = DEFAULT_PACK_CREDITS
         return cls(
             enabled=os.environ.get("BACKCHANNEL_X402_ENABLED", "").lower() in {"1", "true", "yes"},
             pay_to_address=os.environ.get("BACKCHANNEL_X402_RECEIVING_ADDRESS", ""),
@@ -126,7 +142,18 @@ class X402Config:
             price_per_request_usdc=os.environ.get(
                 "BACKCHANNEL_X402_PRICE_USDC", DEFAULT_PRICE_USDC
             ),
+            pack_usdc=os.environ.get("BACKCHANNEL_X402_PACK_USDC", DEFAULT_PACK_USDC),
+            pack_credits=pack_credits,
         )
+
+    def per_op_micros(self) -> int:
+        """USDC micros debited per metered op on a plan='x402' key."""
+        try:
+            pack_micros = int(round(float(self.pack_usdc) * 1_000_000))
+        except (TypeError, ValueError):
+            pack_micros = int(round(float(DEFAULT_PACK_USDC) * 1_000_000))
+        credits = self.pack_credits if self.pack_credits > 0 else DEFAULT_PACK_CREDITS
+        return max(1, pack_micros // credits)
 
     def requirement_for(self, resource: str) -> PaymentRequirement:
         price = self.price_overrides.get(resource, self.price_per_request_usdc)

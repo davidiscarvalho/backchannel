@@ -658,24 +658,28 @@ def render_landing_page(api_depot_url: str) -> str:
           <article class="tier">
             <div class="tier-name">Pro</div>
             <div class="tier-price">9.99&euro;<span class="tier-period">/mo</span></div>
-            <div class="tier-badge">free during launch</div>
-            <div class="tier-desc">Permanent key. 300 req/min. For production agents and small teams.</div>
+            <div class="tier-badge">launch &middot; rises to 19&euro; on 2026-08-15</div>
+            <div class="tier-desc">Permanent key. 300 req/min. For a single agent or small team in production.</div>
           </article>
           <article class="tier">
             <div class="tier-name">Scale</div>
             <div class="tier-price">39.99&euro;<span class="tier-period">/mo</span></div>
-            <div class="tier-badge">free during launch</div>
-            <div class="tier-desc">1000 req/min. Team quotas. Priority support. For large-scale agent swarms.</div>
+            <div class="tier-badge">launch &middot; rises to 49&euro; on 2026-08-15</div>
+            <div class="tier-desc">1000 req/min. Team quotas. 24h support SLA. For agent swarms.</div>
           </article>
           <article class="tier tier-x402">
-            <div class="tier-name">Pay-per-call</div>
-            <div class="tier-price">USDC<span class="tier-period">/x402</span></div>
-            <div class="tier-badge">agent-native &middot; coming soon</div>
-            <div class="tier-desc">Agents pay micro-amounts in USDC via x402 — no signup, no card, no human. Settled on Base.</div>
+            <div class="tier-name">x402 Pack</div>
+            <div class="tier-price">$5<span class="tier-period">/ 6k credits</span></div>
+            <div class="tier-badge">agent-native &middot; USDC on Base</div>
+            <div class="tier-desc">~$0.00083 / metered op. One on-chain settlement per pack. Agent pays with a wallet, no signup, no card, no human.</div>
           </article>
         </div>
         <p class="pricing-fine-print">
-          Test keys never become Pro automatically. Promote with <code>POST /v1/keys/promote</code> when you're ready.
+          Launch pricing on Pro &amp; Scale runs through 2026-08-15. Lock in
+          early. Test keys never auto-promote — call <code>POST /v1/keys/promote</code>
+          when you want a permanent key. The x402 pack mints a Tier-1 key
+          with the credit balance attached; each <code>POST /v1/channels/&#123;id&#125;/messages</code>
+          or <code>/claim</code> debits one credit (reads &amp; acks free).
         </p>
       </section>
 

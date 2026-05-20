@@ -32,8 +32,9 @@ class X402Tests(unittest.TestCase):
             network="base-mainnet",
             price_per_request_usdc="0.01",
             verifier=StaticTestVerifier(accepted_proof="proof_valid_demo"),
+            pack_usdc="5.00",
+            pack_credits=6000,
         )
-        self.app_obj.x402.config.verifier = StaticTestVerifier(accepted_proof="proof_valid_demo")
         self.app = self.app_obj
 
     def tearDown(self) -> None:
@@ -77,7 +78,8 @@ class X402Tests(unittest.TestCase):
         req = body["accepts"][0]
         self.assertEqual(req["scheme"], "exact")
         self.assertEqual(req["network"], "base-mainnet")
-        self.assertEqual(req["maxAmountRequired"], "0.01")
+        # /v1/keys/x402 advertises the credit-pack price, not per-request.
+        self.assertEqual(req["maxAmountRequired"], "5.00")
         self.assertEqual(req["asset"], "USDC")
         self.assertEqual(req["payTo"], "0xPAYTO000000000000000000000000000000000")
         self.assertIn("documentation_url", body)
