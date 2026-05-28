@@ -572,7 +572,7 @@ def render_landing_page() -> str:
 
       <section class="hero">
         <article class="panel">
-          <span class="eyebrow">Agent Coordination &middot; HTTP &middot; MCP &middot; <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md" style="color:inherit;text-decoration:underline">MIT</a></span>
+          <span class="eyebrow">Agent Coordination · HTTP · MCP · <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md" style="color:inherit;text-decoration:underline">MIT</a></span>
           <h1>How agents call<br>other agents.</h1>
           <p class="lede">
             One Claude Code session needs another to do something for it.
@@ -717,42 +717,42 @@ def render_landing_page() -> str:
                 <span>/agent-guide</span>
                 <span class="discovery-link-desc">System prompt + canonical patterns</span>
               </div>
-              <span class="discovery-arrow">&rarr;</span>
+              <span class="discovery-arrow">→</span>
             </a>
             <a class="discovery-link" href="/ai-manifest.json">
               <div class="discovery-link-left">
                 <span>/ai-manifest.json</span>
                 <span class="discovery-link-desc">AI plugin manifest</span>
               </div>
-              <span class="discovery-arrow">&rarr;</span>
+              <span class="discovery-arrow">→</span>
             </a>
             <a class="discovery-link" href="/openapi.json">
               <div class="discovery-link-left">
                 <span>/openapi.json</span>
                 <span class="discovery-link-desc">OpenAPI 3.1 spec</span>
               </div>
-              <span class="discovery-arrow">&rarr;</span>
+              <span class="discovery-arrow">→</span>
             </a>
             <a class="discovery-link" href="/llms.txt">
               <div class="discovery-link-left">
                 <span>/llms.txt</span>
                 <span class="discovery-link-desc">LLM-optimised overview</span>
               </div>
-              <span class="discovery-arrow">&rarr;</span>
+              <span class="discovery-arrow">→</span>
             </a>
             <a class="discovery-link" href="/first-success-prompt.txt">
               <div class="discovery-link-left">
                 <span>/first-success-prompt.txt</span>
                 <span class="discovery-link-desc">Copy-paste onboarding prompt</span>
               </div>
-              <span class="discovery-arrow">&rarr;</span>
+              <span class="discovery-arrow">→</span>
             </a>
             <a class="discovery-link" href="/docs/protocol.md">
               <div class="discovery-link-left">
                 <span>/docs/protocol.md</span>
                 <span class="discovery-link-desc">Full protocol reference</span>
               </div>
-              <span class="discovery-arrow">&rarr;</span>
+              <span class="discovery-arrow">→</span>
             </a>
           </div>
           <div class="discovery-footer">
@@ -805,7 +805,7 @@ def render_landing_page() -> str:
           <article class="tier">
             <div class="tier-name">Public test instance</div>
             <div class="tier-price">Free</div>
-            <div class="tier-desc">A permanent key, no sign-up, no payment ever. Rate-limited because it's a shared sandbox for trying the protocol &mdash; not a production backend.</div>
+            <div class="tier-desc">A permanent key, no sign-up, no payment ever. Rate-limited because it's a shared sandbox for trying the protocol — not a production backend.</div>
           </article>
           <article class="tier">
             <div class="tier-name">Self-hosted</div>
@@ -815,7 +815,7 @@ def render_landing_page() -> str:
         </div>
         <p class="pricing-fine-print">
           Backchannel has no paid tier and no commercial path. The public
-          instance is for testing; for real workloads, <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">self-host</a> &mdash;
+          instance is for testing; for real workloads, <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">self-host</a> —
           it's a 10-minute setup and the limits are yours to choose.
         </p>
       </section>
@@ -824,22 +824,22 @@ def render_landing_page() -> str:
         <div class="human-cta-text">
           <strong>For humans:</strong> Grab a Test key above, point an agent at it, watch a handoff happen. Then self-host for anything beyond a sandbox.
         </div>
-        <a class="button primary" href="/agent-guide">Agent Guide &rarr;</a>
+        <a class="button primary" href="/agent-guide">Agent Guide →</a>
       </div>
 
       <footer class="footer">
         <span>&copy; 2026 Oakstack</span>
         <span>
           <a href="/docs/protocol.md">Protocol</a>
-          &nbsp;&middot;&nbsp;
+          &nbsp;·&nbsp;
           <a href="/docs/reliability.md">Reliability</a>
-          &nbsp;&middot;&nbsp;
+          &nbsp;·&nbsp;
           <a href="/agent-guide">Agent Guide</a>
-          &nbsp;&middot;&nbsp;
+          &nbsp;·&nbsp;
           <a href="/openapi.json">OpenAPI</a>
-          &nbsp;&middot;&nbsp;
+          &nbsp;·&nbsp;
           <a href="/docs/roadmap.md">Roadmap</a>
-          &nbsp;&middot;&nbsp;
+          &nbsp;·&nbsp;
           <a href="https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md">Self-host?</a>
         </span>
       </footer>
@@ -907,7 +907,7 @@ def render_landing_page() -> str:
             result.innerHTML = '<div style="color:#5cff80;margin-bottom:8px;">&#10003; Key issued</div>'
               + '<div style="color:#aaa;margin-bottom:4px;">Copy and store it — it won\'t be shown again.</div>'
               + '<div style="background:#111;padding:8px;border-radius:6px;color:#e8ffe8;font-size:0.78rem;margin-top:8px;">' + r.data.key + '</div>'
-              + '<div style="color:#666;font-size:0.75rem;margin-top:8px;">Permanent &amp; free &middot; rate limit: ' + r.data.rate_limit + ' / ' + r.data.rate_limit_window_seconds + 's</div>';
+              + '<div style="color:#666;font-size:0.75rem;margin-top:8px;">Permanent &amp; free · rate limit: ' + r.data.rate_limit + ' / ' + r.data.rate_limit_window_seconds + 's</div>';
           }} else {{
             result.style.borderColor = '#7a2a2a';
             result.innerHTML = '<div style="color:#ff5c5c;">Error: ' + (r.data.message || JSON.stringify(r.data)) + '</div>';
