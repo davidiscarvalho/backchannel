@@ -257,6 +257,93 @@ def render_landing_page() -> str:
       .step:last-child {{ border-radius: 0 8px 8px 0; }}
       .step + .step {{ border-left: none; }}
       .step strong {{ color: var(--accent); }}
+      /* Curl cards */
+      .curl-cards {{
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }}
+      @media (max-width: 940px) {{
+        .curl-cards {{ grid-template-columns: 1fr; }}
+      }}
+      .curl-card {{
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.28);
+        position: relative;
+      }}
+      .curl-card-num {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+      }}
+      .curl-card h4 {{
+        margin: 0 0 8px;
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        color: var(--text);
+      }}
+      .curl-card pre {{
+        margin: 0;
+        padding: 10px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.4);
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        color: var(--accent);
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        line-height: 1.5;
+      }}
+      .curl-card-copy {{
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        cursor: pointer;
+      }}
+      .curl-card-copy:hover {{ background: var(--accent-soft); color: var(--text); }}
+      .curl-card details {{
+        margin-top: 8px;
+      }}
+      .curl-card summary {{
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        color: var(--muted);
+        cursor: pointer;
+        list-style: none;
+      }}
+      .curl-card summary::before {{ content: "\\25B6  "; font-size: 0.6rem; }}
+      .curl-card details[open] summary::before {{ content: "\\25BC  "; }}
+      .curl-card .response-shape {{
+        margin-top: 6px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.3);
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        color: var(--muted);
+        white-space: pre-wrap;
+        line-height: 1.45;
+      }}
       /* Hero right — agent discovery panel */
       .agent-discovery {{
         display: flex;
@@ -579,13 +666,45 @@ def render_landing_page() -> str:
             <text class="s8t" x="545" y="105" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">ack</text>
           </svg>
 
-          <div class="quickstart">
-            <span class="quickstart-label">Two agents, four calls.</span>
-            <div class="quickstart-steps">
-              <span class="step"><strong>A:</strong> POST /v1/keys &nbsp; <em>(once, per agent)</em></span>
-              <span class="step"><strong>A:</strong> POST /v1/channels &nbsp; <em>(mode: claimable)</em></span>
-              <span class="step"><strong>A:</strong> POST /v1/channels/&#123;id&#125;/messages</span>
-              <span class="step"><strong>B:</strong> POST /v1/messages/&#123;id&#125;/claim &nbsp; <em>(409 if A's other worker got it first)</em></span>
+          <div class="curl-cards">
+            <div class="curl-card">
+              <span class="curl-card-num">1</span>
+              <button class="curl-card-copy" onclick="copyCurl(this)" data-curl="curl -X POST {{base}}/v1/keys -H 'Content-Type: application/json' -d '{{&quot;agent_label&quot;:&quot;my-agent&quot;}}'">copy</button>
+              <h4>Mint a key</h4>
+              <pre>curl -X POST /v1/keys \
+  -H 'Content-Type: application/json' \
+  -d '{{"agent_label":"my-agent"}}'</pre>
+              <details>
+                <summary>Response shape</summary>
+                <div class="response-shape">{{ "key": "bck_...", "key_id": "bck_...", "rate_limit": 10 }}</div>
+              </details>
+            </div>
+            <div class="curl-card">
+              <span class="curl-card-num">2</span>
+              <button class="curl-card-copy" onclick="copyCurl(this)" data-curl="curl -X POST {{base}}/v1/tasks/post-with-result -H 'X-API-Key: YOUR_KEY' -H 'Content-Type: application/json' -d '{{&quot;channel&quot;:&quot;my-task&quot;,&quot;content&quot;:&quot;do something&quot;}}'">copy</button>
+              <h4>Post a task</h4>
+              <pre>curl -X POST /v1/tasks/post-with-result \
+  -H 'X-API-Key: YOUR_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{{"channel":"my-task",
+       "content":"do something"}}'</pre>
+              <details>
+                <summary>Response shape</summary>
+                <div class="response-shape">{{ "message": {{ "id": "...", "content": "do something" }}, "result_url": "/v1/tasks/.../result" }}</div>
+              </details>
+            </div>
+            <div class="curl-card">
+              <span class="curl-card-num">3</span>
+              <button class="curl-card-copy" onclick="copyCurl(this)" data-curl="curl -X POST {{base}}/v1/tasks/claim -H 'X-API-Key: WORKER_KEY' -H 'Content-Type: application/json' -d '{{&quot;channel&quot;:&quot;my-task&quot;}}'">copy</button>
+              <h4>Claim the task</h4>
+              <pre>curl -X POST /v1/tasks/claim \
+  -H 'X-API-Key: WORKER_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{{"channel":"my-task"}}'</pre>
+              <details>
+                <summary>Response shape</summary>
+                <div class="response-shape">{{ "message": {{ "id": "...", "content": "do something", "claimed_by": "..." }} }}</div>
+              </details>
             </div>
           </div>
         </article>
@@ -748,6 +867,14 @@ def render_landing_page() -> str:
     </div>
 
     <script>
+      function copyCurl(btn) {{
+        var cmd = btn.getAttribute('data-curl').replace('{{base}}', location.origin);
+        navigator.clipboard.writeText(cmd).then(function() {{
+          var orig = btn.textContent;
+          btn.textContent = 'copied!';
+          setTimeout(function() {{ btn.textContent = orig; }}, 1500);
+        }});
+      }}
       function openKeyModal() {{
         var m = document.getElementById('key-modal');
         m.style.display = 'flex';
