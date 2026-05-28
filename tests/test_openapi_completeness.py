@@ -36,6 +36,7 @@ META_ROUTES = {
     ("GET", r"^/account/usage$"),
     ("GET", r"^/status$"),
     ("GET", r"^/status\.html$"),
+    ("GET", r"^/repo(?P<suffix>/.*)?$"),
 }
 
 

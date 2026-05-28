@@ -164,6 +164,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors)\.md$"), False, self.read_doc),
             ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
             ("GET", re.compile(r"^/metrics$"), False, self.prometheus_metrics),
+            ("GET", re.compile(r"^/repo(?P<suffix>/.*)?$"), False, self.repo_redirect),
             ("GET", re.compile(r"^/robots\.txt$"), False, self.robots_txt),
             ("GET", re.compile(r"^/\.well-known/ai-plugin\.json$"), False, self.ai_plugin),
             ("GET", re.compile(r"^/\.well-known/agent-policy\.json$"), False, self.agent_policy),
@@ -610,6 +611,16 @@ Recovery path:
     def prometheus_metrics(self, request: Request) -> Response:
         body = metrics_registry.render_prometheus().encode("utf-8")
         return Response(status=200, body=body, content_type="text/plain; version=0.0.4")
+
+    _REPO_URL = "https://github.com/davidiscarvalho/backchannel"
+
+    def repo_redirect(self, request: Request, suffix: str | None = None) -> Response:
+        url = self._REPO_URL + (suffix or "")
+        return Response(
+            status=302,
+            body=b"",
+            extra_headers=[("Location", url)],
+        )
 
     def robots_txt(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
@@ -1483,7 +1494,7 @@ is not accessible.
             "updated_at": self.store.now().isoformat(),
             "availability": "best-effort — this is a free, open test instance",
             "health_url": f"{base}/health",
-            "self_host_url": "https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md",
+            "self_host_url": f"{base}/repo/blob/master/SELF-HOST.md",
         })
 
     def status_page(self, request: Request) -> Response:
