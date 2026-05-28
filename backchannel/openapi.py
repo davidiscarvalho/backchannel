@@ -1,5 +1,70 @@
 from __future__ import annotations
 
+# Meta routes intentionally omitted from the OpenAPI spec — these are
+# discovery, docs, health, and ops surfaces that an agent does not
+# call programmatically as part of the agent verb workflow:
+#   GET /                                  (root HTML)
+#   GET /openapi.json                      (this document)
+#   GET /agent-guide                       (markdown for humans/agents)
+#   GET /ai-manifest.json                  (AI plugin manifest)
+#   GET /.well-known/backchannel.json
+#   GET /.well-known/ai-manifest.json
+#   GET /.well-known/openapi.json
+#   GET /.well-known/ai-plugin.json
+#   GET /.well-known/agent-policy.json
+#   GET /first-success-prompt.txt
+#   GET /llms.txt
+#   GET /docs/{document}.md                (markdown docs)
+#   GET /docs/playground                   (HTML playground)
+#   GET /metrics                           (Prometheus)
+#   GET /robots.txt
+#   GET /status, GET /status.html          (status page)
+#   GET /account/usage                     (HTML usage page)
+# If you add a non-meta route to backchannel/http.py, add it here too;
+# tests/test_openapi_completeness.py will fail otherwise.
+
+
+# Mutating HTTP methods that should accept an Idempotency-Key header.
+_MUTATING_METHODS = {"post", "patch", "put", "delete"}
+
+
+def _idempotency_key_param() -> dict:
+    return {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string"},
+        "description": (
+            "Client-supplied key to make this request safely retryable. "
+            "The server stores the response for a short window and replays "
+            "it on retries with the same key, so network retries do not "
+            "produce duplicates."
+        ),
+    }
+
+
+def _inject_idempotency_keys(paths: dict) -> None:
+    """Add an Idempotency-Key header parameter to every mutating
+    operation that does not already declare one."""
+    for _path, methods in paths.items():
+        if not isinstance(methods, dict):
+            continue
+        for method, op in methods.items():
+            if method.lower() not in _MUTATING_METHODS:
+                continue
+            if not isinstance(op, dict):
+                continue
+            params = list(op.get("parameters", []))
+            if any(
+                isinstance(p, dict)
+                and p.get("in") == "header"
+                and p.get("name", "").lower() == "idempotency-key"
+                for p in params
+            ):
+                continue
+            params.append(_idempotency_key_param())
+            op["parameters"] = params
+
 
 def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
     channel_schema = {
@@ -176,7 +241,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "x-example-agent-prompt": prompt,
         }
 
-    return {
+    spec = {
         "openapi": "3.1.0",
         "info": {
             "title": "Backchannel API",
@@ -927,3 +992,597 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             },
         },
     }
+
+    message_id_param = {"name": "message_id", "in": "path", "required": True, "schema": {"type": "string"}}
+    identifier_param = {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}, "description": "Channel ID or alias"}
+    session_id_param = {"name": "session_id", "in": "path", "required": True, "schema": {"type": "string"}}
+    invitation_id_param = {"name": "invitation_id", "in": "path", "required": True, "schema": {"type": "string"}}
+
+    extra_paths = {
+        "/v1/messages/{message_id}/release": {
+            "post": {
+                "summary": "Release a claim on a message",
+                "description": (
+                    "Releases a previously-claimed message so another actor can claim it. "
+                    "Use when an agent crashes mid-task or decides not to process a claimed message."
+                ),
+                "operationId": "releaseMessage",
+                "security": auth_required,
+                "tags": ["Messages"],
+                **hints(
+                    operation_id="releaseMessage",
+                    when_to_use="to give up a claim you no longer want to fulfill so another agent can take over",
+                    output_type="release_status",
+                    prompt="Release the claim on message msg_xyz789 so another worker can pick it up.",
+                    agent_prompt_snippet="Call releaseMessage with {\"actor\": \"<your-actor-name>\"} to undo a claim you cannot complete.",
+                ),
+                "parameters": [message_id_param],
+                **json_body(
+                    {"type": "object", "required": ["actor"], "properties": {"actor": {"type": "string"}, "metadata": {"type": "object"}}},
+                    example={"actor": "worker-agent-07"},
+                ),
+                "responses": {**ok({"type": "object", "properties": {"status": {"type": "string"}, "message": {"$ref": "#/components/schemas/Message"}}}), **errors(401, 403, 404, 409)},
+            }
+        },
+        "/v1/messages/{message_id}/claim-with-lease": {
+            "post": {
+                "summary": "Claim a message with a heartbeat lease",
+                "description": (
+                    "Claims a message and returns a lease_token + lease_expires_at. "
+                    "The claim is auto-released if the holder fails to call POST /v1/leases/{lease_token}/heartbeat "
+                    "before lease_expires_at — protects against agents that crash holding a claim."
+                ),
+                "operationId": "claimMessageWithLease",
+                "security": auth_required,
+                "tags": ["Messages"],
+                **hints(
+                    operation_id="claimMessageWithLease",
+                    when_to_use="when processing may take longer than the channel TTL would otherwise allow, or when crash-resilience matters — call heartbeat_lease periodically to keep the claim",
+                    output_type="lease_object",
+                    prompt="Claim message msg_xyz789 with a 60s lease so the claim is released automatically if I crash.",
+                ),
+                "parameters": [message_id_param],
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["actor"],
+                        "properties": {
+                            "actor": {"type": "string"},
+                            "lease_seconds": {"type": "integer", "minimum": 1, "description": "Lease duration in seconds (server-bounded)."},
+                            "metadata": {"type": "object"},
+                        },
+                    },
+                    example={"actor": "worker-agent-07", "lease_seconds": 60},
+                ),
+                "responses": {
+                    "200": {
+                        "description": "Claimed with lease",
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "status": {"type": "string", "example": "claimed"},
+                                "message": {"$ref": "#/components/schemas/Message"},
+                                "lease_token": {"type": "string"},
+                                "lease_expires_at": {"type": "string", "format": "date-time"},
+                            },
+                        }}},
+                    },
+                    **errors(401, 403, 404, 409, 410),
+                },
+            }
+        },
+        "/v1/leases/{lease_token}/heartbeat": {
+            "post": {
+                "summary": "Extend a lease on a claimed message",
+                "description": (
+                    "Pushes back the lease_expires_at so the claim is not auto-released. "
+                    "Call periodically (e.g. every lease_seconds / 2) while processing."
+                ),
+                "operationId": "heartbeatLease",
+                "security": auth_required,
+                "tags": ["Messages"],
+                **hints(
+                    operation_id="heartbeatLease",
+                    when_to_use="while still working on a leased claim — call before lease_expires_at to keep the claim alive",
+                    output_type="lease_object",
+                    prompt="Heartbeat the lease on the long-running task so it does not get auto-released.",
+                ),
+                "parameters": [{"name": "lease_token", "in": "path", "required": True, "schema": {"type": "string"}}],
+                **json_body(
+                    {"type": "object", "properties": {"lease_seconds": {"type": "integer", "minimum": 1}}},
+                    example={"lease_seconds": 60},
+                ),
+                "responses": {
+                    "200": {
+                        "description": "Lease extended",
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "lease_token": {"type": "string"},
+                                "lease_expires_at": {"type": "string", "format": "date-time"},
+                                "message": {"$ref": "#/components/schemas/Message"},
+                            },
+                        }}},
+                    },
+                    **errors(401, 403, 404, 410),
+                },
+            }
+        },
+        "/v1/messages/{message_id}": {
+            "delete": {
+                "summary": "Retract a message you posted",
+                "description": "The author of a message may retract it. Returns {status: 'retracted'}.",
+                "operationId": "deleteMessage",
+                "security": auth_required,
+                "tags": ["Messages"],
+                **hints(
+                    operation_id="deleteMessage",
+                    when_to_use="to retract a message you posted by mistake or that contains sensitive data",
+                    output_type="status_object",
+                    prompt="Retract message msg_xyz789 — it was posted with stale data.",
+                ),
+                "parameters": [message_id_param],
+                "responses": {
+                    "200": {"description": "Retracted", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}}}}}},
+                    **errors(401, 403, 404),
+                },
+            }
+        },
+        "/v1/channels/{identifier}": {
+            "delete": {
+                "summary": "Delete a channel (owner only)",
+                "description": "Permanently deletes a channel and its messages. Owner of the channel only. Returns 204 No Content on success.",
+                "operationId": "deleteChannel",
+                "security": auth_required,
+                "tags": ["Channels"],
+                **hints(
+                    operation_id="deleteChannel",
+                    when_to_use="to permanently remove a channel and all its messages when work is done — only the channel owner can call this",
+                    output_type="status_object",
+                    prompt="Delete the 'task-queue' channel now that the workflow is complete.",
+                ),
+                "parameters": [identifier_param],
+                "responses": {"204": {"description": "Deleted"}, **errors(401, 403, 404)},
+            }
+        },
+        "/v1/tasks/post": {
+            "post": {
+                "summary": "Hand a task to one consumer (verb-style alias)",
+                "description": (
+                    "Creates the claimable channel if missing and posts a task message in one call. "
+                    "Verb-style alias for createChannel(mode=claimable) + createMessage."
+                ),
+                "operationId": "taskPost",
+                "security": auth_required,
+                "tags": ["Tasks"],
+                **hints(
+                    operation_id="taskPost",
+                    when_to_use="to hand a task to exactly one consumer on a known channel name in a single call",
+                    output_type="message_envelope",
+                    prompt="Post a task to the 'jobs' channel for any worker to claim.",
+                    agent_prompt_snippet="Call taskPost with {\"channel\": \"<channel-name>\", \"content\": \"<task>\", \"actor_label\": \"<you>\"}. The channel is created on the fly if it does not exist.",
+                ),
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["channel", "content"],
+                        "properties": {
+                            "channel": {"type": "string", "description": "Channel name or ID; created on the fly if missing"},
+                            "content": {"type": "string"},
+                            "actor_label": {"type": "string"},
+                            "metadata": {"type": "object"},
+                        },
+                    },
+                    example={"channel": "jobs", "content": "Resize image 42", "actor_label": "orchestrator"},
+                ),
+                "responses": {
+                    "201": {"description": "Task posted", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"$ref": "#/components/schemas/Message"},
+                            "channel": {"type": "string"},
+                            "next_cursor": {"type": ["string", "null"], "format": "date-time"},
+                        },
+                    }}}},
+                    **errors(401, 422),
+                },
+            }
+        },
+        "/v1/tasks/claim": {
+            "post": {
+                "summary": "Drain a channel and claim the next unclaimed message (verb-style)",
+                "description": (
+                    "Atomically discovers and claims the next unclaimed message on the named channel. "
+                    "Returns {claimed: null} if the channel is empty — callers do not need to branch on 409."
+                ),
+                "operationId": "taskClaim",
+                "security": auth_required,
+                "tags": ["Tasks"],
+                **hints(
+                    operation_id="taskClaim",
+                    when_to_use="in worker loops — call repeatedly to claim the next available task; the response cleanly distinguishes 'got a task' from 'nothing to do'",
+                    output_type="claim_status",
+                    prompt="Claim the next available task on the 'jobs' channel as actor 'worker-1'.",
+                    agent_prompt_snippet="Call taskClaim with {\"channel\": \"<channel-name>\", \"actor\": \"<your-actor>\"} in a loop. When the response is {claimed: null}, sleep briefly then retry.",
+                ),
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["channel", "actor"],
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "actor": {"type": "string"},
+                            "metadata": {"type": "object"},
+                        },
+                    },
+                    example={"channel": "jobs", "actor": "worker-1"},
+                ),
+                "responses": {
+                    "200": {"description": "Claim attempt", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "claimed": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/Message"}]},
+                            "note": {"type": "string"},
+                        },
+                    }}}},
+                    **errors(401, 403, 404, 422),
+                },
+            }
+        },
+        "/v1/tasks/subscribe": {
+            "post": {
+                "summary": "Read recent messages from a channel (verb-style)",
+                "description": "Verb-style alias for GET /v1/channels/{id}/messages. Body parameters instead of query string.",
+                "operationId": "taskSubscribe",
+                "security": auth_required,
+                "tags": ["Tasks"],
+                **hints(
+                    operation_id="taskSubscribe",
+                    when_to_use="to poll a channel for new messages with a body-driven request — useful when channel/since/limit are passed as variables",
+                    output_type="message_list",
+                    prompt="Subscribe to the 'events' channel and return messages since the last cursor.",
+                ),
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["channel"],
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "since": {"type": ["string", "null"], "format": "date-time"},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+                        },
+                    },
+                    example={"channel": "events", "since": None, "limit": 50},
+                ),
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "data": {"type": "array", "items": {"$ref": "#/components/schemas/Message"}},
+                            "limit": {"type": "integer"},
+                            "next_cursor": {"type": ["string", "null"], "format": "date-time"},
+                        },
+                    }}}},
+                    **errors(401, 403, 404, 422),
+                },
+            }
+        },
+        "/v1/tasks/post-with-result": {
+            "post": {
+                "summary": "Post a task and create a paired result channel",
+                "description": (
+                    "Combines createChannel + createMessage + a deterministic broadcast result channel. "
+                    "The producer can then call GET /v1/tasks/{message_id}/result to await; the consumer that "
+                    "claims the task calls POST /v1/tasks/{message_id}/result to publish the result."
+                ),
+                "operationId": "taskPostWithResult",
+                "security": auth_required,
+                "tags": ["Tasks"],
+                **hints(
+                    operation_id="taskPostWithResult",
+                    when_to_use="for request/response style workflows where the caller wants a single message_id it can wait on for the result",
+                    output_type="task_with_result",
+                    prompt="Post a task to 'jobs' and wait for the result agent to publish back.",
+                    agent_prompt_snippet="Call taskPostWithResult, then poll taskAwaitResult with the returned message.id until the consumer publishes.",
+                ),
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["channel", "content"],
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "content": {"type": "string"},
+                            "actor_label": {"type": "string"},
+                            "metadata": {"type": "object"},
+                        },
+                    },
+                    example={"channel": "jobs", "content": "Summarize doc 42", "actor_label": "caller"},
+                ),
+                "responses": {
+                    "201": {"description": "Posted", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"$ref": "#/components/schemas/Message"},
+                            "channel": {"type": "string"},
+                            "result_channel": {"type": "string"},
+                            "result_url": {"type": "string"},
+                        },
+                    }}}},
+                    **errors(401, 422),
+                },
+            }
+        },
+        "/v1/tasks/{message_id}/result": {
+            "post": {
+                "summary": "Publish a result for a task posted with post-with-result",
+                "description": "The consumer that claimed the task publishes its result here. The paired result channel was created by taskPostWithResult.",
+                "operationId": "taskPublishResult",
+                "security": auth_required,
+                "tags": ["Tasks"],
+                **hints(
+                    operation_id="taskPublishResult",
+                    when_to_use="after claiming and processing a task posted via taskPostWithResult, to deliver the result back to the producer",
+                    output_type="message_envelope",
+                    prompt="Publish the summary back to the caller as the result of task msg_xyz789.",
+                ),
+                "parameters": [message_id_param],
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["content"],
+                        "properties": {
+                            "content": {"type": "string"},
+                            "actor_label": {"type": "string"},
+                            "metadata": {"type": "object"},
+                        },
+                    },
+                    example={"content": "Summary: …", "actor_label": "worker-1"},
+                ),
+                "responses": {
+                    "201": {"description": "Result published", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "result_channel": {"type": "string"},
+                            "message": {"$ref": "#/components/schemas/Message"},
+                        },
+                    }}}},
+                    **errors(401, 403, 404, 422),
+                },
+            },
+            "get": {
+                "summary": "Await the result of a task posted with post-with-result",
+                "description": "Non-blocking: returns 404 with code result_not_ready if no result has been published yet. Callers poll with backoff.",
+                "operationId": "taskAwaitResult",
+                "security": auth_required,
+                "tags": ["Tasks"],
+                **hints(
+                    operation_id="taskAwaitResult",
+                    when_to_use="after taskPostWithResult, to poll for the consumer's result. On 404 result_not_ready, sleep briefly and retry.",
+                    output_type="task_result",
+                    prompt="Wait for the result of task msg_xyz789.",
+                    agent_prompt_snippet="Call taskAwaitResult repeatedly with exponential backoff until you receive a 200 response with {result: …}.",
+                ),
+                "parameters": [message_id_param],
+                "responses": {
+                    "200": {"description": "Result ready", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string"},
+                            "result": {"$ref": "#/components/schemas/Message"},
+                        },
+                    }}}},
+                    **errors(401, 403, 404),
+                },
+            },
+        },
+        "/v1/sessions": {
+            "get": {
+                "summary": "List sessions for the calling key",
+                "operationId": "listSessions",
+                "security": auth_required,
+                "tags": ["Sessions"],
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {"data": {"type": "array", "items": {"type": "object"}}},
+                    }}}},
+                    **errors(401),
+                },
+            },
+            "post": {
+                "summary": "Create a session",
+                "operationId": "createSession",
+                "security": auth_required,
+                "tags": ["Sessions"],
+                **json_body(
+                    {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "metadata": {"type": "object"},
+                        },
+                    },
+                    example={"name": "deploy-flow", "metadata": {"run_id": "r-42"}},
+                ),
+                "responses": {
+                    "201": {"description": "Created", "content": {"application/json": {"schema": {"type": "object"}}}},
+                    **errors(401, 422),
+                },
+            },
+        },
+        "/v1/sessions/{session_id}": {
+            "get": {
+                "summary": "Get a session",
+                "operationId": "getSession",
+                "security": auth_required,
+                "tags": ["Sessions"],
+                "parameters": [session_id_param],
+                "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object"}}}}, **errors(401, 403, 404)},
+            },
+            "patch": {
+                "summary": "Update a session",
+                "operationId": "patchSession",
+                "security": auth_required,
+                "tags": ["Sessions"],
+                "parameters": [session_id_param],
+                **json_body({"type": "object", "properties": {"name": {"type": "string"}, "metadata": {"type": "object"}}}),
+                "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object"}}}}, **errors(401, 403, 404, 422)},
+            },
+            "delete": {
+                "summary": "Delete a session",
+                "operationId": "deleteSession",
+                "security": auth_required,
+                "tags": ["Sessions"],
+                "parameters": [session_id_param],
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}}}}}},
+                    **errors(401, 403, 404),
+                },
+            },
+        },
+        "/v1/observability/metrics": {
+            "get": {
+                "summary": "Per-key observability metrics",
+                "description": "Returns the calling key's request, claim, ack, and error counters. Scoped to the requesting key.",
+                "operationId": "observabilityMetrics",
+                "security": auth_required,
+                "tags": ["Observability"],
+                "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object"}}}}, **errors(401)},
+            }
+        },
+        "/v1/keys/me": {
+            "get": {
+                "summary": "Describe the calling API key",
+                "description": "Returns the key_id, owner_id, plan, active flag, scopes, and the rate-limit window currently applied to this key.",
+                "operationId": "keysMe",
+                "security": auth_required,
+                "tags": ["Keys"],
+                **hints(
+                    operation_id="keysMe",
+                    when_to_use="to introspect the current key — useful at agent startup to confirm authentication and discover applicable scopes / rate limits",
+                    output_type="key_info",
+                    prompt="Verify the current API key and report its scopes and rate limit.",
+                ),
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "key_id": {"type": "string"},
+                            "owner_id": {"type": "string"},
+                            "plan": {"type": "string"},
+                            "active": {"type": "boolean"},
+                            "scopes": {"type": "array", "items": {"type": "string"}},
+                            "rate_limit": {"type": "integer"},
+                            "rate_limit_window_seconds": {"type": "integer"},
+                        },
+                    }}}},
+                    **errors(401),
+                },
+            }
+        },
+        "/v1/keys/me/scopes": {
+            "put": {
+                "summary": "Set the scopes for the calling key",
+                "description": "Replaces the scope set for the calling key. Pass the full desired scope list.",
+                "operationId": "setKeyScopes",
+                "security": auth_required,
+                "tags": ["Keys"],
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["scopes"],
+                        "properties": {"scopes": {"type": "array", "items": {"type": "string"}}},
+                    },
+                    example={"scopes": ["messages:claim", "channels:write"]},
+                ),
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "key_id": {"type": "string"},
+                            "scopes": {"type": "array", "items": {"type": "string"}},
+                        },
+                    }}}},
+                    **errors(401, 422),
+                },
+            }
+        },
+        "/v1/channels/{identifier}/metrics": {
+            "get": {
+                "summary": "Per-channel metrics (owner only)",
+                "description": "Returns counters for the channel: message count, claim count, ack count, etc.",
+                "operationId": "channelMetrics",
+                "security": auth_required,
+                "tags": ["Observability"],
+                "parameters": [identifier_param],
+                "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object"}}}}, **errors(401, 403, 404)},
+            }
+        },
+        "/v1/security/audit": {
+            "get": {
+                "summary": "List security events for the calling key",
+                "description": "Returns recent security-relevant events scoped to the requesting key (key issuance, admin actions involving this key, etc.). A key cannot see events for other keys it does not own.",
+                "operationId": "securityAudit",
+                "security": auth_required,
+                "tags": ["Security"],
+                "parameters": [
+                    {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}},
+                ],
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "data": {"type": "array", "items": {"type": "object"}},
+                            "count": {"type": "integer"},
+                        },
+                    }}}},
+                    **errors(401),
+                },
+            }
+        },
+        "/v1/admin/channels/{identifier}/pause": {
+            "post": {
+                "summary": "Pause a channel (admin only)",
+                "description": (
+                    "Stops the channel from accepting new messages (writes return 503). Reads continue to work. "
+                    "Requires X-Admin-Token matching BACKCHANNEL_ADMIN_TOKEN. Operators use this to quarantine "
+                    "a misbehaving channel without dropping data."
+                ),
+                "operationId": "adminPauseChannel",
+                "tags": ["Admin"],
+                "security": [],
+                "parameters": [
+                    identifier_param,
+                    {"name": "X-Admin-Token", "in": "header", "required": True, "schema": {"type": "string"}, "description": "Must match the server's BACKCHANNEL_ADMIN_TOKEN env var."},
+                ],
+                "responses": {"200": {"description": "Paused", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Channel"}}}}, **errors(401, 403, 404)},
+            }
+        },
+        "/v1/admin/channels/{identifier}/resume": {
+            "post": {
+                "summary": "Resume a paused channel (admin only)",
+                "description": "Re-enables writes on a previously paused channel. Requires X-Admin-Token.",
+                "operationId": "adminResumeChannel",
+                "tags": ["Admin"],
+                "security": [],
+                "parameters": [
+                    identifier_param,
+                    {"name": "X-Admin-Token", "in": "header", "required": True, "schema": {"type": "string"}},
+                ],
+                "responses": {"200": {"description": "Resumed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Channel"}}}}, **errors(401, 403, 404)},
+            }
+        },
+    }
+
+    # Merge — /v1/channels/{identifier} and /v1/messages/{message_id} already
+    # exist in spec["paths"] for GET/PATCH and POSTs; merge new methods (e.g.
+    # DELETE) into the same path object rather than overwriting.
+    for path, methods in extra_paths.items():
+        if path in spec["paths"]:
+            spec["paths"][path].update(methods)
+        else:
+            spec["paths"][path] = methods
+
+    _inject_idempotency_keys(spec["paths"])
+
+    return spec
