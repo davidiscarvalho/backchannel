@@ -157,7 +157,7 @@ class BackchannelApp:
             ("GET", re.compile(r"^/\.well-known/openapi\.json$"), False, self.openapi),
             ("GET", re.compile(r"^/first-success-prompt\.txt$"), False, self.first_success_prompt),
             ("GET", re.compile(r"^/llms\.txt$"), False, self.llms_txt),
-            ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors)\.md$"), False, self.read_doc),
+            ("GET", re.compile(r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors|invitations-flow)\.md$"), False, self.read_doc),
             ("GET", re.compile(r"^/docs/playground$"), False, self.playground),
             ("GET", re.compile(r"^/metrics$"), False, self.prometheus_metrics),
             ("GET", re.compile(r"^/repo(?P<suffix>/.*)?$"), False, self.repo_redirect),
@@ -541,9 +541,11 @@ POST /v1/actors/<id>/aliases      {{"alias":"<str>"}}
 ### Keys (self-serve)
 POST /v1/keys                     {{"agent_label":"<str>"}}  → permanent key, free, no signup
 
-### Invitations
+### Invitations (cross-instance collaboration)
+POST   /v1/channels/<id>/invitations  mint invitation (24h expiry)
 GET    /v1/channel-invitations/<id>   resolves token; grants restricted channel access on first call
 DELETE /v1/channel-invitations/<id>   revoke
+Worked example: {base}/docs/invitations-flow.md
 
 ### Observability / account
 GET /v1/keys/me         → current key's owner_id, plan, scopes
