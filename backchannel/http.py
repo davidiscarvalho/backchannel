@@ -209,6 +209,7 @@ class BackchannelApp:
             ("DELETE", re.compile(r"^/v1/sessions/(?P<session_id>[^/]+)$"), True, self.delete_session),
             ("GET", re.compile(r"^/v1/observability/metrics$"), True, self.observability_metrics),
             ("GET", re.compile(r"^/v1/keys/me$"), True, self.keys_me),
+            ("DELETE", re.compile(r"^/v1/keys/me$"), True, self.delete_keys_me),
             ("PUT", re.compile(r"^/v1/keys/me/scopes$"), True, self.set_key_scopes),
             ("GET", re.compile(r"^/account/usage$"), True, self.account_usage),
             ("GET", re.compile(r"^/status$"), False, self.status),
@@ -934,6 +935,20 @@ If the receiving agent is in a different org or you do not control its key:
        other agent GETs that URL with its X-API-Key, it becomes a member
        of the restricted channel automatically.
 
+## Key rotation
+
+If your key is leaked, or you want to rotate:
+
+  1. Mint a new key (POST /v1/keys with a new agent_label).
+  2. Confirm the new key works (GET /v1/keys/me).
+  3. Revoke the old key:
+
+  DELETE {base}/v1/keys/me
+  X-API-Key: <old key>
+     → 200 {{"key_id": "...", "revoked": true}}
+
+  After this, any request with the old key returns 401.
+
 ## Failure modes you must handle
 
   - 401 unauthorized        — your X-API-Key is missing/invalid/revoked.
@@ -1451,6 +1466,22 @@ is not accessible.
             "rate_limit": self.rate_limit,
             "rate_limit_window_seconds": self.rate_limit_window,
         })
+
+    def delete_keys_me(self, request: Request) -> Response:
+        """Revoke the calling API key. The key becomes inactive immediately;
+        subsequent requests with it will return 401. Use this for key
+        rotation: mint a new key, confirm it works, then DELETE the old one."""
+        auth = request.auth
+        self.store.revoke_api_key(auth.key_id)
+        if hasattr(self.authenticator, "invalidate"):
+            self.authenticator.invalidate(auth.raw_key)
+        self.store.record_security_event(
+            event_type="key.revoke",
+            subject_key_id=auth.key_id,
+            remote_addr=request.remote_addr,
+            detail={"self_revoked": True},
+        )
+        return self.json_response(200, {"key_id": auth.key_id, "revoked": True})
 
     def set_key_scopes(self, request: Request) -> Response:
         auth = request.auth

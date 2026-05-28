@@ -127,6 +127,10 @@ class LocalAuthenticator:
         self._cache[raw_key] = (ctx, time.monotonic() + self.cache_ttl_seconds)
         return ctx
 
+    def invalidate(self, raw_key: str) -> None:
+        """Remove a key from the auth cache so revocation takes effect immediately."""
+        self._cache.pop(raw_key, None)
+
     def invalidate_cache(self, raw_key: str | None = None) -> None:
         if raw_key is None:
             self._cache.clear()

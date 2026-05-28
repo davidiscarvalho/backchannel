@@ -1478,7 +1478,30 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     }}}},
                     **errors(401),
                 },
-            }
+            },
+            "delete": {
+                "summary": "Revoke the calling API key",
+                "description": "Permanently deactivates the calling key. Subsequent requests with this key return 401. Use for key rotation: mint a new key, verify it works, then DELETE the old one.",
+                "operationId": "deleteKeysMe",
+                "security": auth_required,
+                "tags": ["Keys"],
+                **hints(
+                    operation_id="deleteKeysMe",
+                    when_to_use="when a key is leaked or during key rotation — after minting a new key and confirming it works, revoke the old one",
+                    output_type="confirmation",
+                    prompt="Revoke this API key permanently. This cannot be undone.",
+                ),
+                "responses": {
+                    "200": {"description": "Key revoked", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "key_id": {"type": "string"},
+                            "revoked": {"type": "boolean"},
+                        },
+                    }}}},
+                    **errors(401),
+                },
+            },
         },
         "/v1/keys/me/scopes": {
             "put": {

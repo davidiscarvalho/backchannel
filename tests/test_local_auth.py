@@ -178,6 +178,26 @@ class LocalAuthTests(unittest.TestCase):
         status, _ = self.request("POST", "/v1/keys", {"agent_label": "ephemeral"})
         self.assertEqual(status, 201)
 
+    def test_delete_keys_me_revokes(self) -> None:
+        """DELETE /v1/keys/me revokes the calling key; subsequent use returns 401."""
+        status, data = self.request("POST", "/v1/keys", {"agent_label": "to-revoke"})
+        self.assertEqual(status, 201)
+        key = data["key"]
+
+        # Key works before revocation
+        status, data = self.request("GET", "/v1/keys/me", api_key=key)
+        self.assertEqual(status, 200)
+        self.assertTrue(data["active"])
+
+        # Revoke
+        status, data = self.request("DELETE", "/v1/keys/me", api_key=key)
+        self.assertEqual(status, 200)
+        self.assertTrue(data["revoked"])
+
+        # Key no longer works
+        status, data = self.request("GET", "/v1/keys/me", api_key=key)
+        self.assertEqual(status, 401)
+
 
 if __name__ == "__main__":
     unittest.main()
