@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -121,6 +122,18 @@ class BackchannelApp:
             self.rate_limit_window = int(os.environ.get("BACKCHANNEL_RATE_LIMIT_WINDOW", "3600"))
         except ValueError:
             self.rate_limit_window = 3600
+        # Trusted proxy CIDRs for X-Forwarded-For parsing.
+        # Behind a reverse proxy, REMOTE_ADDR is always the proxy IP, so
+        # per-IP rate limiters collapse into one global bucket without this.
+        raw_proxies = os.environ.get("BACKCHANNEL_TRUSTED_PROXIES", "")
+        self.trusted_proxy_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for cidr in raw_proxies.split(","):
+            cidr = cidr.strip()
+            if cidr:
+                try:
+                    self.trusted_proxy_networks.append(ipaddress.ip_network(cidr, strict=False))
+                except ValueError:
+                    pass  # skip malformed entries silently
         self.invitation_rate_limiter = invitation_rate_limiter or SlidingWindowRateLimiter(
             limit=10,
             window_seconds=60,
@@ -265,6 +278,35 @@ class BackchannelApp:
         )
         return [response.body]
 
+    def _is_trusted_proxy(self, addr: str) -> bool:
+        """Return True if *addr* falls inside any configured trusted-proxy CIDR."""
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False
+        return any(ip in net for net in self.trusted_proxy_networks)
+
+    def _resolve_remote_addr(self, environ: dict[str, Any]) -> str:
+        """Derive the real client IP, honoring X-Forwarded-For behind trusted proxies.
+
+        Walk the XFF chain right-to-left, skipping hops that are trusted
+        proxies, and return the first untrusted address. If REMOTE_ADDR is
+        not a trusted proxy, XFF is ignored entirely (prevents spoofing by
+        direct clients).
+        """
+        raw = str(environ.get("REMOTE_ADDR", "unknown"))
+        if not self.trusted_proxy_networks or not self._is_trusted_proxy(raw):
+            return raw
+        xff = environ.get("HTTP_X_FORWARDED_FOR", "")
+        if not xff:
+            return raw
+        hops = [h.strip() for h in xff.split(",") if h.strip()]
+        # Walk right-to-left; skip trusted proxies
+        for hop in reversed(hops):
+            if not self._is_trusted_proxy(hop):
+                return hop
+        return raw
+
     def dispatch(self, environ: dict[str, Any]) -> Response:
         method = environ["REQUEST_METHOD"].upper()
         path = environ.get("PATH_INFO", "") or "/"
@@ -275,7 +317,7 @@ class BackchannelApp:
             headers=self._extract_headers(environ),
             body=self._read_body(environ),
             store=self.store,
-            remote_addr=str(environ.get("REMOTE_ADDR", "unknown")),
+            remote_addr=self._resolve_remote_addr(environ),
         )
 
         for route_method, pattern, requires_auth, handler in self.routes:
