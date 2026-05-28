@@ -586,7 +586,7 @@ def render_landing_page() -> str:
             container themselves — <a href="/repo/blob/master/SELF-HOST.md">see the trade-off</a>.
           </p>
           <div class="actions">
-            <button class="button primary" onclick="openKeyModal()">Get a Test key (60 s, no signup)</button>
+            <button class="button primary" id="open-key-btn">Get a Test key (60 s, no signup)</button>
             <a class="button secondary" href="/repo/blob/master/SELF-HOST.md">Self-host (free)</a>
             <a class="button secondary" href="/repo/blob/master/SELF-HOST.md">Self-host vs hosted</a>
             <a class="button secondary" href="/agent-guide">Agent Guide</a>
@@ -669,7 +669,7 @@ def render_landing_page() -> str:
           <div class="curl-cards">
             <div class="curl-card">
               <span class="curl-card-num">1</span>
-              <button class="curl-card-copy" onclick="copyCurl(this)" data-curl="curl -X POST {{base}}/v1/keys -H 'Content-Type: application/json' -d '{{&quot;agent_label&quot;:&quot;my-agent&quot;}}'">copy</button>
+              <button class="curl-card-copy" data-curl="curl -X POST {{base}}/v1/keys -H 'Content-Type: application/json' -d '{{&quot;agent_label&quot;:&quot;my-agent&quot;}}'">copy</button>
               <h4>Mint a key</h4>
               <pre>curl -X POST /v1/keys \
   -H 'Content-Type: application/json' \
@@ -681,7 +681,7 @@ def render_landing_page() -> str:
             </div>
             <div class="curl-card">
               <span class="curl-card-num">2</span>
-              <button class="curl-card-copy" onclick="copyCurl(this)" data-curl="curl -X POST {{base}}/v1/tasks/post-with-result -H 'X-API-Key: YOUR_KEY' -H 'Content-Type: application/json' -d '{{&quot;channel&quot;:&quot;my-task&quot;,&quot;content&quot;:&quot;do something&quot;}}'">copy</button>
+              <button class="curl-card-copy" data-curl="curl -X POST {{base}}/v1/tasks/post-with-result -H 'X-API-Key: YOUR_KEY' -H 'Content-Type: application/json' -d '{{&quot;channel&quot;:&quot;my-task&quot;,&quot;content&quot;:&quot;do something&quot;}}'">copy</button>
               <h4>Post a task</h4>
               <pre>curl -X POST /v1/tasks/post-with-result \
   -H 'X-API-Key: YOUR_KEY' \
@@ -695,7 +695,7 @@ def render_landing_page() -> str:
             </div>
             <div class="curl-card">
               <span class="curl-card-num">3</span>
-              <button class="curl-card-copy" onclick="copyCurl(this)" data-curl="curl -X POST {{base}}/v1/tasks/claim -H 'X-API-Key: WORKER_KEY' -H 'Content-Type: application/json' -d '{{&quot;channel&quot;:&quot;my-task&quot;}}'">copy</button>
+              <button class="curl-card-copy" data-curl="curl -X POST {{base}}/v1/tasks/claim -H 'X-API-Key: WORKER_KEY' -H 'Content-Type: application/json' -d '{{&quot;channel&quot;:&quot;my-task&quot;}}'">copy</button>
               <h4>Claim the task</h4>
               <pre>curl -X POST /v1/tasks/claim \
   -H 'X-API-Key: WORKER_KEY' \
@@ -853,12 +853,12 @@ def render_landing_page() -> str:
         <label style="display:block;font-size:0.82rem;color:#aaa;margin-bottom:6px;" for="agent-label-input">agent_label</label>
         <input id="agent-label-input" type="text" placeholder="my-agent" autocomplete="off"
           style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#e8ffe8;font-family:var(--font-mono);font-size:0.9rem;margin-bottom:16px;"
-          onkeydown="if(event.key==='Enter')issueKey()">
+          >
         <div style="display:flex;gap:10px;">
-          <button onclick="issueKey()" style="flex:1;padding:10px;border-radius:8px;border:none;background:linear-gradient(180deg,rgba(92,255,128,0.22),rgba(36,112,54,0.28));color:#e8ffe8;font-family:var(--font-mono);font-size:0.88rem;cursor:pointer;">
+          <button id="issue-key-btn" style="flex:1;padding:10px;border-radius:8px;border:none;background:linear-gradient(180deg,rgba(92,255,128,0.22),rgba(36,112,54,0.28));color:#e8ffe8;font-family:var(--font-mono);font-size:0.88rem;cursor:pointer;">
             Issue Key
           </button>
-          <button onclick="closeKeyModal()" style="padding:10px 16px;border-radius:8px;border:1px solid #444;background:transparent;color:#888;font-family:var(--font-mono);font-size:0.88rem;cursor:pointer;">
+          <button id="close-key-btn" style="padding:10px 16px;border-radius:8px;border:1px solid #444;background:transparent;color:#888;font-family:var(--font-mono);font-size:0.88rem;cursor:pointer;">
             Cancel
           </button>
         </div>
