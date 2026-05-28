@@ -265,6 +265,7 @@ class BackchannelApp:
             ("traceparent", traceparent),
             ("X-RateLimit-Limit", str(self.rate_limit)),
             ("X-RateLimit-Window", str(self.rate_limit_window)),
+            ("Access-Control-Allow-Origin", "*"),
         ]
         if response.status < 400:
             headers.append(('Link', '</openapi.json>; rel="service-desc"'))
@@ -319,6 +320,23 @@ class BackchannelApp:
             store=self.store,
             remote_addr=self._resolve_remote_addr(environ),
         )
+
+        # CORS preflight: for any route that exists, OPTIONS returns 204
+        # with permissive CORS headers. The API uses X-API-Key (no cookies),
+        # so Access-Control-Allow-Origin: * is safe.
+        if method == "OPTIONS":
+            for _, pattern, _, _ in self.routes:
+                if pattern.match(path):
+                    return Response(
+                        status=204,
+                        body=b"",
+                        extra_headers=[
+                            ("Access-Control-Allow-Origin", "*"),
+                            ("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS"),
+                            ("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Idempotency-Key, X-Admin-Token"),
+                            ("Access-Control-Max-Age", "86400"),
+                        ],
+                    )
 
         for route_method, pattern, requires_auth, handler in self.routes:
             if route_method != method:
