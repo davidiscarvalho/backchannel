@@ -12,10 +12,7 @@ from http import HTTPStatus
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs
-from urllib.request import Request as URLRequest
-from urllib.request import urlopen
 
 from backchannel.auth import (
     AuthContext,
@@ -23,7 +20,6 @@ from backchannel.auth import (
     LocalAuthenticator,
     hash_key,
     mint_raw_key,
-    split_key,
 )
 from backchannel.observability import record_request, registry as metrics_registry
 from backchannel.landing import render_landing_page
@@ -1532,7 +1528,6 @@ is not accessible.
         """Human-readable status page. Probes the DB + last-cleanup-run as a
         liveness signal. No external monitoring dependency."""
         import time as _time
-        base = self.base_url or "https://backchannel.oakstack.eu"
         # Liveness probe — same query /health uses.
         db_ok = True
         db_latency_ms: float | None = None

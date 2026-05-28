@@ -9,12 +9,11 @@ shim retained only for the existing test suite).
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Callable
 
 from backchannel.store import APIError
 

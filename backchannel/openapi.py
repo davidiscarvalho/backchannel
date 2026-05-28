@@ -996,7 +996,6 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
     message_id_param = {"name": "message_id", "in": "path", "required": True, "schema": {"type": "string"}}
     identifier_param = {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}, "description": "Channel ID or alias"}
     session_id_param = {"name": "session_id", "in": "path", "required": True, "schema": {"type": "string"}}
-    invitation_id_param = {"name": "invitation_id", "in": "path", "required": True, "schema": {"type": "string"}}
 
     extra_paths = {
         "/v1/messages/{message_id}/release": {

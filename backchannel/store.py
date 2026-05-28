@@ -2123,7 +2123,6 @@ class BackchannelStore:
         import hashlib
         import hmac
         import time as _time
-        from urllib.error import URLError
         from urllib.request import Request as URLRequest
         from urllib.request import urlopen
 

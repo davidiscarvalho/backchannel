@@ -1,4 +1,4 @@
-name: tests
+name: CI
 
 on:
   push:
@@ -16,3 +16,29 @@ jobs:
         run: pip install pytest pytest-asyncio respx httpx "mcp>=1.0.0"
       - name: Run the test suite
         run: pytest tests/ mcp_server/tests/
+
+  ui-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: cd ui && npm ci
+      - name: Build
+        run: cd ui && npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install linters
+        run: pip install ruff mypy
+      - name: Ruff check
+        run: ruff check backchannel/
+      - name: Mypy (advisory)
+        run: mypy backchannel/ --ignore-missing-imports || true
