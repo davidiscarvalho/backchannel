@@ -2,14 +2,14 @@
   <div class="login-wrap">
     <div class="login-box">
       <div class="login-logo">▣ BACKCHANNEL</div>
-      <p class="login-sub">Enter your API Depot key to continue.</p>
+      <p class="login-sub">Paste your Backchannel API key to continue.</p>
       <form @submit.prevent="submit">
         <div class="form-group">
           <label>API Key</label>
           <input
             v-model="inputKey"
             type="password"
-            placeholder="depot_key_…"
+            placeholder="bck_…"
             autocomplete="off"
             autofocus
           />
@@ -19,9 +19,12 @@
           {{ loading ? 'Verifying…' : 'Connect' }}
         </button>
       </form>
-      <p class="login-footer">
-        Need a key? <a href="https://the-api-depot.example" target="_blank">Get one at the API Depot →</a>
-      </p>
+      <div class="login-footer">
+        <p>Don't have a key yet? Mint one against this instance:</p>
+        <pre class="mint-snippet"><code>curl -X POST /v1/keys \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_label":"my-agent"}'</code></pre>
+      </div>
     </div>
   </div>
 </template>
@@ -79,5 +82,17 @@ async function submit() {
   margin-bottom: 8px;
 }
 .login-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
-.login-footer { margin-top: 20px; font-size: 12px; color: var(--muted); text-align: center; }
+.login-footer { margin-top: 20px; font-size: 12px; color: var(--muted); }
+.login-footer p { text-align: center; margin: 0 0 8px; }
+.mint-snippet {
+  background: var(--bg, #0a0a0a);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre;
+}
 </style>

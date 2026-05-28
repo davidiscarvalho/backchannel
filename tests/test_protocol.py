@@ -243,7 +243,7 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(duplicate_ack["status"], "already_acknowledged")
 
-    def test_protected_routes_require_a_valid_depot_key(self) -> None:
+    def test_protected_routes_require_a_valid_api_key(self) -> None:
         status, missing_key = self.request("POST", "/v1/channels", {"name": "Ops", "mode": "broadcast"}, api_key=None)
         self.assertEqual(status, 401)
         self.assertEqual(missing_key["error"], "unauthorized")
