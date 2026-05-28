@@ -511,8 +511,24 @@ def render_landing_page() -> str:
             <span>MCP server</span>
             <span>Python + TypeScript SDKs</span>
           </div>
-          <!-- How-it-works diagram -->
+          <!-- Animated how-it-works diagram -->
           <svg viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:820px;margin:22px 0 8px;display:block;" aria-label="How agents call other agents: Agent A posts a task to a claimable channel, Agent B claims it, Agent C gets 409">
+            <style>
+              @keyframes fadeIn {{ from {{ opacity:0 }} to {{ opacity:1 }} }}
+              @keyframes drawLine {{ from {{ stroke-dashoffset:200 }} to {{ stroke-dashoffset:0 }} }}
+              .s1 {{ animation: fadeIn 0.4s ease both; animation-delay: 0s; }}
+              .s2 {{ animation: drawLine 0.6s ease both, fadeIn 0.6s ease both; animation-delay: 0.6s; }}
+              .s2t {{ animation: fadeIn 0.3s ease both; animation-delay: 0.9s; }}
+              .s3 {{ animation: fadeIn 0.5s ease both; animation-delay: 1.4s; }}
+              .s4 {{ animation: drawLine 0.5s ease both, fadeIn 0.5s ease both; animation-delay: 2.2s; }}
+              .s4t {{ animation: fadeIn 0.3s ease both; animation-delay: 2.5s; }}
+              .s5 {{ animation: fadeIn 0.4s ease both; animation-delay: 2.8s; }}
+              .s6 {{ animation: drawLine 0.5s ease both, fadeIn 0.5s ease both; animation-delay: 3.5s; }}
+              .s6t {{ animation: fadeIn 0.3s ease both; animation-delay: 3.8s; }}
+              .s7 {{ animation: fadeIn 0.4s ease both; animation-delay: 4.0s; }}
+              .s8 {{ animation: drawLine 0.5s ease both, fadeIn 0.5s ease both; animation-delay: 4.6s; }}
+              .s8t {{ animation: fadeIn 0.3s ease both; animation-delay: 4.9s; }}
+            </style>
             <defs>
               <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
                 <path d="M0,0 L8,3 L0,6" fill="none" stroke="#58ff7d" stroke-width="1.2"/>
@@ -521,38 +537,46 @@ def render_landing_page() -> str:
                 <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8bcf90" stroke-width="1.2"/>
               </marker>
             </defs>
-            <!-- Agent A box -->
-            <rect x="10" y="62" width="120" height="56" rx="10" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
-            <text x="70" y="86" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="13" font-weight="bold">Agent A</text>
-            <text x="70" y="106" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="10">(producer)</text>
-            <!-- Arrow A → Channel -->
-            <line x1="130" y1="90" x2="298" y2="90" stroke="#58ff7d" stroke-width="1.2" marker-end="url(#ah)"/>
-            <text x="214" y="80" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">POST /v1/channels/x/messages</text>
-            <!-- Channel cylinder -->
-            <ellipse cx="370" cy="68" rx="62" ry="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
-            <rect x="308" y="68" width="124" height="44" fill="rgba(8,22,9,0.95)" stroke="none"/>
-            <line x1="308" y1="68" x2="308" y2="112" stroke="#58ff7d" stroke-width="1.2"/>
-            <line x1="432" y1="68" x2="432" y2="112" stroke="#58ff7d" stroke-width="1.2"/>
-            <ellipse cx="370" cy="112" rx="62" ry="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
-            <text x="370" y="95" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="11" font-weight="bold">claimable</text>
-            <text x="370" y="108" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">channel</text>
-            <!-- Arrow Channel → Agent B -->
-            <line x1="432" y1="80" x2="568" y2="52" stroke="#58ff7d" stroke-width="1.2" marker-end="url(#ah)"/>
-            <text x="510" y="52" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">claim</text>
-            <!-- Agent B box -->
-            <rect x="570" y="24" width="140" height="56" rx="10" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
-            <text x="640" y="48" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="13" font-weight="bold">Agent B</text>
-            <text x="640" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">200 &#x2713; wins</text>
-            <!-- Ack arrow back -->
-            <line x1="640" y1="80" x2="435" y2="105" stroke="#8bcf90" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ah-muted)"/>
-            <text x="545" y="105" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">ack</text>
-            <!-- Arrow Channel → Agent C -->
-            <line x1="432" y1="105" x2="568" y2="145" stroke="#8bcf90" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ah-muted)"/>
-            <text x="490" y="140" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">claim</text>
-            <!-- Agent C box -->
-            <rect x="570" y="120" width="140" height="56" rx="10" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1.2" stroke-dasharray="5,4"/>
-            <text x="640" y="144" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="13">Agent C</text>
-            <text x="640" y="164" text-anchor="middle" fill="#ff5c5c" font-family="monospace" font-size="10">409 already_claimed</text>
+            <!-- 1. Agent A box -->
+            <g class="s1">
+              <rect x="10" y="62" width="120" height="56" rx="10" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
+              <text x="70" y="86" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="13" font-weight="bold">Agent A</text>
+              <text x="70" y="106" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="10">(producer)</text>
+            </g>
+            <!-- 2. Arrow A → Channel -->
+            <line class="s2" x1="130" y1="90" x2="298" y2="90" stroke="#58ff7d" stroke-width="1.2" stroke-dasharray="200" marker-end="url(#ah)"/>
+            <text class="s2t" x="214" y="80" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">POST /v1/channels/x/messages</text>
+            <!-- 3. Channel cylinder -->
+            <g class="s3">
+              <ellipse cx="370" cy="68" rx="62" ry="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
+              <rect x="308" y="68" width="124" height="44" fill="rgba(8,22,9,0.95)" stroke="none"/>
+              <line x1="308" y1="68" x2="308" y2="112" stroke="#58ff7d" stroke-width="1.2"/>
+              <line x1="432" y1="68" x2="432" y2="112" stroke="#58ff7d" stroke-width="1.2"/>
+              <ellipse cx="370" cy="112" rx="62" ry="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
+              <text x="370" y="95" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="11" font-weight="bold">claimable</text>
+              <text x="370" y="108" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">channel</text>
+            </g>
+            <!-- 4. Arrow Channel → Agent B (claim) -->
+            <line class="s4" x1="432" y1="80" x2="568" y2="52" stroke="#58ff7d" stroke-width="1.2" stroke-dasharray="200" marker-end="url(#ah)"/>
+            <text class="s4t" x="510" y="52" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">claim</text>
+            <!-- 5. Agent B box -->
+            <g class="s5">
+              <rect x="570" y="24" width="140" height="56" rx="10" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.2"/>
+              <text x="640" y="48" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="13" font-weight="bold">Agent B</text>
+              <text x="640" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">200 &#x2713; wins</text>
+            </g>
+            <!-- 6. Arrow Channel → Agent C (rejected claim) -->
+            <line class="s6" x1="432" y1="105" x2="568" y2="145" stroke="#8bcf90" stroke-width="1.2" stroke-dasharray="200" marker-end="url(#ah-muted)"/>
+            <text class="s6t" x="490" y="140" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">claim</text>
+            <!-- 7. Agent C box -->
+            <g class="s7">
+              <rect x="570" y="120" width="140" height="56" rx="10" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1.2" stroke-dasharray="5,4"/>
+              <text x="640" y="144" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="13">Agent C</text>
+              <text x="640" y="164" text-anchor="middle" fill="#ff5c5c" font-family="monospace" font-size="10">409 already_claimed</text>
+            </g>
+            <!-- 8. Ack arrow back from B -->
+            <line class="s8" x1="640" y1="80" x2="435" y2="105" stroke="#8bcf90" stroke-width="1" stroke-dasharray="200" marker-end="url(#ah-muted)"/>
+            <text class="s8t" x="545" y="105" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">ack</text>
           </svg>
 
           <div class="quickstart">
