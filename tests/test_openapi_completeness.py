@@ -29,7 +29,7 @@ META_ROUTES = {
     ("GET", r"^/\.well-known/agent-policy\.json$"),
     ("GET", r"^/first-success-prompt\.txt$"),
     ("GET", r"^/llms\.txt$"),
-    ("GET", r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors)\.md$"),
+    ("GET", r"^/docs/(?P<document>protocol|auth-integration|roadmap|sla|reliability|errors|invitations-flow)\.md$"),
     ("GET", r"^/docs/playground$"),
     ("GET", r"^/metrics$"),
     ("GET", r"^/robots\.txt$"),

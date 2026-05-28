@@ -16,7 +16,10 @@
 
     <div v-if="created" class="card created-box" style="margin-bottom:20px">
       <p class="section-title">New invitation created</p>
-      <p class="mono" style="font-size:13px;word-break:break-all;margin-bottom:6px">{{ created.id }}</p>
+      <div class="row" style="align-items:center;gap:8px;margin-bottom:6px">
+        <p class="mono" style="font-size:13px;word-break:break-all;margin:0;flex:1">{{ created.id }}</p>
+        <button class="btn-copy" @click="copy(created.id)" :title="'Copy invitation ID'">{{ copied === created.id ? 'copied!' : 'copy' }}</button>
+      </div>
       <p class="muted" style="font-size:12px">Expires {{ formatTs(created.expires_at) }}</p>
       <p class="muted" style="font-size:12px;margin-top:4px">Share this ID — it resolves to <strong>{{ created.channel.name }}</strong> without exposing the channel ID directly.</p>
     </div>
@@ -30,8 +33,9 @@
             <p class="mono" style="font-size:12px;word-break:break-all">{{ inv.id }}</p>
             <p class="muted" style="font-size:12px;margin-top:3px">→ {{ inv.channel.name }} · expires {{ formatTs(inv.expires_at) }}</p>
           </div>
-          <span v-if="!inv.active" class="badge" style="opacity:0.4;margin-left:12px">inactive</span>
-          <button v-else class="btn-danger" style="margin-left:12px;font-size:11px;padding:4px 10px" @click="revoke(inv.id)">Revoke</button>
+          <button class="btn-copy" style="margin-left:8px" @click="copy(inv.id)">{{ copied === inv.id ? 'copied!' : 'copy' }}</button>
+          <span v-if="!inv.active" class="badge" style="opacity:0.4;margin-left:4px">inactive</span>
+          <button v-else class="btn-danger" style="margin-left:4px;font-size:11px;padding:4px 10px" @click="revoke(inv.id)">Revoke</button>
         </div>
       </div>
     </div>
@@ -47,6 +51,7 @@ const createForm = ref({ channel: '' })
 const creating = ref(false)
 const createError = ref('')
 const created = ref(null)
+const copied = ref('')
 
 async function load() {
   const cached = JSON.parse(localStorage.getItem('bc_invitations') || '[]')
@@ -90,6 +95,13 @@ async function revoke(id) {
   }
 }
 
+function copy(id) {
+  navigator.clipboard.writeText(id).then(() => {
+    copied.value = id
+    setTimeout(() => { if (copied.value === id) copied.value = '' }, 1500)
+  })
+}
+
 function formatTs(ts) {
   return new Date(ts).toLocaleString()
 }
@@ -100,4 +112,15 @@ onMounted(load)
 <style scoped>
 .inv-card { margin-bottom: 8px; }
 .created-box { border-color: rgba(88,255,125,0.4); background: rgba(88,255,125,0.05); }
+.btn-copy {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: transparent;
+  color: #8bcf90;
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+  white-space: nowrap;
+}
 </style>
