@@ -24,6 +24,8 @@ from __future__ import annotations
 # tests/test_openapi_completeness.py will fail otherwise.
 
 
+from typing import Any
+
 # Mutating HTTP methods that should accept an Idempotency-Key header.
 _MUTATING_METHODS = {"post", "patch", "put", "delete"}
 
@@ -66,7 +68,7 @@ def _inject_idempotency_keys(paths: dict) -> None:
             op["parameters"] = params
 
 
-def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
+def build_openapi_spec(onboarding_url: str | None = "", base_url: str = "") -> dict:
     channel_schema = {
         "type": "object",
         "properties": {
@@ -214,7 +216,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
         },
     }
 
-    auth_required = [{"ApiKeyAuth": []}]
+    auth_required: list[dict[str, list[str]]] = [{"ApiKeyAuth": []}]
 
     def json_body(schema: dict, example: dict | None = None) -> dict:
         content: dict[str, object] = {"schema": schema}
@@ -252,7 +254,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "x-example-agent-prompt": prompt,
         }
 
-    spec = {
+    spec: dict[str, Any] = {
         "openapi": "3.1.0",
         "info": {
             "title": "Backchannel API",

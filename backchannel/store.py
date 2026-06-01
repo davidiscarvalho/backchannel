@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 
 def utc_now() -> datetime:
@@ -84,7 +84,7 @@ def _validate_against_schema(value: Any, schema: dict[str, Any], *, prefix: str 
 
     violations: list[dict[str, str]] = []
     expected_type = schema.get("type")
-    type_map = {
+    type_map: dict[str, type | tuple[type, ...]] = {
         "string": str,
         "number": (int, float),
         "integer": int,
@@ -984,7 +984,7 @@ class BackchannelStore:
                     )
             actor = None
             if actor_identifier is not None:
-                actor = self._resolve_actor(conn, self._optional_string(actor_identifier), owner_id=owner_id)
+                actor = self._resolve_actor(conn, cast(str, self._optional_string(actor_identifier)), owner_id=owner_id)
 
             # Mentions: resolve globally by id/alias (you mention another agent),
             # then keep only those that can read this channel (members-only). The
@@ -1771,7 +1771,7 @@ class BackchannelStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def _archive_cleanup_transaction(self, conn: sqlite3.Connection, run_id: str) -> dict[str, int]:
+    def _archive_cleanup_transaction(self, conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:
         now = to_timestamp(self.now())
         expired_messages = conn.execute(
             """
@@ -2191,7 +2191,7 @@ class BackchannelStore:
         conn.execute("DELETE FROM channel_links WHERE channel_id = ?", (channel_id,))
         now = to_timestamp(self.now())
         for related_identifier in related_channels:
-            related = self._resolve_channel(conn, self._optional_string(related_identifier))
+            related = self._resolve_channel(conn, cast(str, self._optional_string(related_identifier)))
             if related["id"] == channel_id:
                 continue
             conn.execute(
@@ -2483,7 +2483,7 @@ class BackchannelStore:
     def _required_string(self, payload: dict[str, Any], field_name: str) -> str:
         if field_name not in payload:
             raise APIError(422, "missing_field", f"'{field_name}' is required")
-        return self._optional_string(payload[field_name], field_name=field_name)
+        return cast(str, self._optional_string(payload[field_name], field_name=field_name))
 
     def _optional_string(
         self,

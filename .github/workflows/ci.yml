@@ -40,5 +40,5 @@ jobs:
         run: pip install ruff mypy
       - name: Ruff check
         run: ruff check backchannel/
-      - name: Mypy (advisory)
-        run: mypy backchannel/ --ignore-missing-imports || true
+      - name: Mypy
+        run: mypy backchannel/ --ignore-missing-imports

@@ -58,8 +58,12 @@ class Request:
     headers: dict[str, str]
     body: bytes
     store: BackchannelStore
-    auth: AuthContext | None = None
+    # Set by the dispatcher before any authenticated handler runs; unauthenticated
+    # handlers that need it populate it themselves. Typed non-optional so handlers
+    # don't need to narrow on every access — the default below is the only None.
+    auth: AuthContext = None  # type: ignore[assignment]
     remote_addr: str = "unknown"
+    rate_limit_remaining: int = 0
 
     def json(self) -> dict[str, Any]:
         if not self.body:

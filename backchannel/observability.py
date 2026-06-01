@@ -114,9 +114,9 @@ class StatRegistry:
             hist_by_name: dict[str, list[tuple[frozenset, _Histogram]]] = {}
             for (name, labels), hist in self._histograms.items():
                 hist_by_name.setdefault(name, []).append((labels, hist))
-            for name, rows in hist_by_name.items():
+            for name, hrows in hist_by_name.items():
                 lines.append(f"# TYPE {name} histogram")
-                for labels, hist in rows:
+                for labels, hist in hrows:
                     base = dict(labels)
                     for upper, count in zip(hist.buckets, hist.counts):
                         bucket_labels = {**base, "le": str(upper)}
