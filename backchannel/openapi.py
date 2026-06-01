@@ -1063,6 +1063,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                 "post": {
                     "summary": "Atomically claim and acknowledge a message (single-call alias)",
                     "operationId": "taskClaimAndAck",
+                    "deprecated": True,
                     "description": (
                         "Claims a message and immediately acknowledges it in one request. "
                         "Equivalent to POST /v1/messages/{id}/claim followed by POST /v1/messages/{id}/ack, "
@@ -1107,6 +1108,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                 "post": {
                     "summary": "Create a claimable channel + invitation in one call",
                     "operationId": "taskCreateClaimableSession",
+                    "deprecated": True,
                     "description": (
                         "Creates a restricted claimable channel and a 24h invitation token in a single round-trip. "
                         "Equivalent to POST /v1/channels followed by POST /v1/channels/{id}/invitations. "
@@ -1439,6 +1441,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "claims the task calls POST /v1/tasks/{message_id}/result to publish the result."
                 ),
                 "operationId": "taskPostWithResult",
+                    "deprecated": True,
                 "security": auth_required,
                 "tags": ["Tasks"],
                 **hints(
@@ -1480,6 +1483,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                 "summary": "Publish a result for a task posted with post-with-result",
                 "description": "The consumer that claimed the task publishes its result here. The paired result channel was created by taskPostWithResult.",
                 "operationId": "taskPublishResult",
+                    "deprecated": True,
                 "security": auth_required,
                 "tags": ["Tasks"],
                 **hints(
@@ -1516,6 +1520,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                 "summary": "Await the result of a task posted with post-with-result",
                 "description": "Non-blocking: returns 404 with code result_not_ready if no result has been published yet. Callers poll with backoff.",
                 "operationId": "taskAwaitResult",
+                    "deprecated": True,
                 "security": auth_required,
                 "tags": ["Tasks"],
                 **hints(

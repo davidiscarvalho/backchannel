@@ -1034,9 +1034,12 @@ is not accessible.
 The steps above ARE the canonical path: createChannel → createMessage →
 listMessages → claimMessage → ackMessage. The OpenAPI spec also exposes
 convenience verb-aliases (/v1/tasks/post, /v1/tasks/broadcast,
-/v1/tasks/claim, /v1/messages/<id>/claim-and-ack). They wrap the same
-operations for one-liners. If in doubt, use the canonical path above — it has
-one consistent response envelope; the aliases exist only to save a round trip.
+/v1/tasks/claim, /v1/tasks/subscribe). They wrap the same operations for
+one-liners. If in doubt, use the canonical path above — it has one consistent
+response envelope; the aliases exist only to save a round trip.
+
+DEPRECATED (still work, but avoid in new code): /v1/tasks/claim-and-ack,
+/v1/tasks/post-with-result (+ /v1/tasks/<id>/result), /v1/tasks/create-claimable-session.
 """
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 

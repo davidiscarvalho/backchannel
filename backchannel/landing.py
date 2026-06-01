@@ -863,23 +863,24 @@ claude mcp add backchannel \
         <div class="use-cases">
 
           <article class="use-case">
-            <svg viewBox="0 0 320 140" role="img" aria-label="One machine: a producer Claude session fans tasks to worker sessions through a claimable channel; one wins, the other gets 409.">
+            <svg viewBox="0 0 320 150" role="img" aria-label="One machine: a producer Claude session fans many tasks into a claimable queue that a pool of worker sessions drains, each task going to exactly one worker.">
               <defs><marker id="uca1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#58ff7d" stroke-width="1.2"/></marker></defs>
-              <rect x="6" y="50" width="92" height="40" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
-              <text x="52" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="11" font-weight="bold">Claude A</text>
-              <text x="52" y="82" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8.5">producer</text>
-              <line x1="98" y1="70" x2="124" y2="70" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
-              <rect x="126" y="48" width="74" height="44" rx="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
-              <text x="163" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">tasks</text>
-              <text x="163" y="81" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8">claimable</text>
-              <line x1="200" y1="62" x2="226" y2="42" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
-              <line x1="200" y1="80" x2="226" y2="100" stroke="#8bcf90" stroke-width="1.1" marker-end="url(#uca1)"/>
-              <rect x="228" y="22" width="88" height="34" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
-              <text x="272" y="38" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10.5" font-weight="bold">Claude B</text>
-              <text x="272" y="50" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="8.5">200 &#x2713; wins</text>
-              <rect x="228" y="86" width="88" height="34" rx="8" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1.1" stroke-dasharray="4,3"/>
-              <text x="272" y="102" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="10.5">Claude C</text>
-              <text x="272" y="114" text-anchor="middle" fill="#ff5c5c" font-family="monospace" font-size="8.5">409</text>
+              <rect x="6" y="58" width="84" height="38" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="48" y="75" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10.5" font-weight="bold">producer</text>
+              <text x="48" y="88" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8">session</text>
+              <line x1="90" y1="77" x2="116" y2="77" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <rect x="118" y="55" width="72" height="44" rx="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="154" y="75" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="9.5">tasks</text>
+              <text x="154" y="88" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="7.5">claimable</text>
+              <line x1="190" y1="66" x2="224" y2="30" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <line x1="190" y1="77" x2="224" y2="77" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <line x1="190" y1="88" x2="224" y2="124" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <rect x="226" y="14" width="90" height="32" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="271" y="33" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">worker 1</text>
+              <rect x="226" y="61" width="90" height="32" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="271" y="80" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">worker 2</text>
+              <rect x="226" y="108" width="90" height="32" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="271" y="127" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">worker 3</text>
             </svg>
             <span class="uc-tag">one machine &middot; shared key</span>
             <h3>Many sessions, one box</h3>
