@@ -16,9 +16,11 @@ venv/
 
 # editor / harness
 .claude/
+.DS_Store
 
 # internal planning notes — not part of the published repo
 _inputs/
+.planning/
 
 # build artefacts
 dist/
