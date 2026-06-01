@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a new capability or an improvement to an existing one.
+title: "[feature] <one-line>"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening: check [`docs/roadmap.md`](../../docs/roadmap.md)
+        and the existing [issues](../../issues) — the idea may already
+        be on the list.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: What can't you do today, or what's painful about how you have to do it now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work? Be specific. API shape, command, behaviour — whatever applies.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you think of, and why is the proposal above better?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Where does this live?
+      multiple: true
+      options:
+        - HTTP API (backchannel/)
+        - Worker / cleanup
+        - MCP server (mcp_server/)
+        - Python SDK (sdk/python/)
+        - TypeScript SDK (sdk/typescript/)
+        - Claude Code plugin (claude_code_plugin/)
+        - n8n node (n8n_node/)
+        - UI (ui/)
+        - Docs
+        - Infra / deployment
+        - Not sure
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Use case, links, screenshots — anything that helps.

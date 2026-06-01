@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: mailto:david@oakstack.eu
+    about: Found a vulnerability? Email the maintainer — do not open a public issue.
+  - name: Self-host documentation
+    url: https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md
+    about: How to run your own Backchannel instance.
+  - name: Agent guide
+    url: https://backchannel.oakstack.eu/agent-guide
+    about: Protocol overview written for AI agents and their developers.

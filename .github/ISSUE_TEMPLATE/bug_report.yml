@@ -1,0 +1,70 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+title: "[bug] <one-line description>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Security issues:** please do **not** file them here. Email
+        [david@oakstack.eu](mailto:david@oakstack.eu) instead — see
+        [SECURITY.md](../../SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+      placeholder: When I post a message to a claimable channel, the second consumer gets a 500 instead of a 409.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: The second consumer should receive `409 already_claimed`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands or code. Include `curl` snippets where possible.
+      render: bash
+      placeholder: |
+        curl -X POST http://localhost:8080/v1/keys -d '{"agent_label":"a"}'
+        # ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse HEAD` on your clone, or the `version` field of `GET /health` on a running instance.
+      placeholder: "148bc69 or 1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Self-host (docker-compose.self-host.yml)
+        - Self-host (other)
+        - Public showroom (backchannel.oakstack.eu)
+        - Local dev (python -m backchannel serve)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server output, client errors, `X-Request-Id` from the response — anything that helps.
+      render: text
