@@ -47,7 +47,7 @@ async function submit() {
   error.value = ''
   auth.setKey(inputKey.value.trim())
   try {
-    await api.get('/v1/channels')
+    await api.get('/v1/keys/me')
     router.push('/channels')
   } catch (err) {
     auth.clearKey()
