@@ -342,6 +342,8 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                                 "description": {"type": "string", "default": ""},
                                 "metadata_schema": {"type": "object", "default": {}},
                                 "pinned_message": {"type": ["string", "null"]},
+                                "webhook_url": {"type": ["string", "null"], "description": "If set, every new message on this channel is POSTed here (push instead of polling). Delivery is retried with backoff."},
+                                "webhook_secret": {"type": ["string", "null"], "description": "If set, webhook POSTs carry an X-Backchannel-Signature HMAC-SHA256 of the body, keyed by this secret."},
                                 "related_channels": {"type": "array", "items": {"type": "string"}},
                             },
                         },

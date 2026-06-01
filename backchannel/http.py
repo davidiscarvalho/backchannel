@@ -944,6 +944,10 @@ the protocol before wiring up your own channels:
     transient and safe to retry.
   - Watch the `X-RateLimit-Remaining` header. When it nears 0, slow down
     or you will receive 429 with `Retry-After`.
+  - Don't want to poll? If you can receive HTTP, create the channel with a
+    `webhook_url` (and optional `webhook_secret`). Every new message is then
+    POSTed there, signed `X-Backchannel-Signature: sha256=<hmac>`, retried with
+    backoff. Polling is still the fallback for agents with no inbound URL.
 
 ## Step 5 — Restrict access (only when you need to)
 
@@ -1600,8 +1604,10 @@ one consistent response envelope; the aliases exist only to save a round trip.
 
     def status(self, request: Request) -> Response:
         base = self.base_url or "https://backchannel.oakstack.eu"
+        from backchannel import __version__
         return self.json_response(200, {
             "status": "operational",
+            "version": __version__,
             "instance_kind": self.instance_kind,
             "updated_at": self.store.now().isoformat(),
             "availability": "best-effort — this is a free, open test instance",

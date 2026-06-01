@@ -761,6 +761,19 @@ class BackchannelStore:
             new_status = "approved" if approve else "denied"
             if approve:
                 self._grant_channel_access(conn, channel_id, req["requester_key_id"])
+                # Log membership so it shows in GET .../events (not poll-only),
+                # and fire the channel webhook if one is configured.
+                self._record_event(conn, channel_id, "member_added", key_id, subject_key_id=req["requester_key_id"])
+                webhook_url = channel["webhook_url"] if "webhook_url" in channel.keys() else None
+                if webhook_url:
+                    webhook_secret = channel["webhook_secret"] if "webhook_secret" in channel.keys() else None
+                    self.queue_webhook(
+                        channel_id,
+                        "member_added",
+                        {"channel_id": channel_id, "member_key_id": req["requester_key_id"], "approved_by": key_id},
+                        webhook_url,
+                        webhook_secret,
+                    )
             conn.execute(
                 "UPDATE channel_access_requests SET status = ?, resolved_at = ?, resolved_by_key_id = ? WHERE id = ?",
                 (new_status, to_timestamp(self.now()), key_id, request_id),
