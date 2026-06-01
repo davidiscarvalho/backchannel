@@ -41,7 +41,7 @@ restart point.
 ### 0.1. Confirm you're on the right branch and clean
 
 ```bash
-$LAPTOP> cd /Users/carvalho/_wrk/backchannel
+$LAPTOP> cd ~/backchannel
 $LAPTOP> git status
 $LAPTOP> git branch --show-current
 $LAPTOP> git log --oneline | head -27
@@ -476,7 +476,7 @@ $LAPTOP> chmod 600 ~/.pypirc
 ### 5.3. Build
 
 ```bash
-$LAPTOP> cd /Users/carvalho/_wrk/backchannel/sdk/python
+$LAPTOP> cd ~/backchannel/sdk/python
 $LAPTOP> pip install --upgrade build twine
 $LAPTOP> rm -rf dist/  build/  *.egg-info
 $LAPTOP> python -m build
@@ -531,7 +531,7 @@ $LAPTOP> rm -rf /tmp/verify-sdk
 ### 6.1. Build
 
 ```bash
-$LAPTOP> cd /Users/carvalho/_wrk/backchannel/mcp_server
+$LAPTOP> cd ~/backchannel/mcp_server
 $LAPTOP> rm -rf dist/  build/  *.egg-info
 $LAPTOP> python -m build
 ```
@@ -597,7 +597,7 @@ either pick another scope (e.g. `@oakstack`) and update
 ### 7.3. Build
 
 ```bash
-$LAPTOP> cd /Users/carvalho/_wrk/backchannel/sdk/typescript
+$LAPTOP> cd ~/backchannel/sdk/typescript
 $LAPTOP> npm install
 $LAPTOP> npm run build
 # → produces dist/
@@ -640,7 +640,7 @@ $LAPTOP> npm view @backchannel/sdk
 ### 8.1. Build
 
 ```bash
-$LAPTOP> cd /Users/carvalho/_wrk/backchannel/n8n_node
+$LAPTOP> cd ~/backchannel/n8n_node
 $LAPTOP> npm install
 $LAPTOP> npm run build
 ```
@@ -784,8 +784,8 @@ takes a few business days.
 
 ```bash
 $LAPTOP> mkdir -p /tmp/backchannel-plugin
-$LAPTOP> cp -r /Users/carvalho/_wrk/backchannel/claude_code_plugin/* /tmp/backchannel-plugin/
-$LAPTOP> cp -r /Users/carvalho/_wrk/backchannel/claude_code_plugin/.claude-plugin /tmp/backchannel-plugin/
+$LAPTOP> cp -r ~/backchannel/claude_code_plugin/* /tmp/backchannel-plugin/
+$LAPTOP> cp -r ~/backchannel/claude_code_plugin/.claude-plugin /tmp/backchannel-plugin/
 $LAPTOP> cd /tmp/backchannel-plugin
 $LAPTOP> git init
 $LAPTOP> git add .
@@ -1004,7 +1004,7 @@ proxy_pass for the JSON ones).
 ### Bonus — deploy the docs site
 
 ```bash
-$LAPTOP> cd /Users/carvalho/_wrk/backchannel
+$LAPTOP> cd ~/backchannel
 $LAPTOP> pip install mkdocs-material
 $LAPTOP> mkdocs build
 # → produces ./site/
