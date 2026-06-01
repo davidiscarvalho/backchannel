@@ -96,6 +96,11 @@ class LeaseReclaimTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(body["status"], "claimed")
         self.assertEqual(body["message"]["claimed_by"]["name"], "rescuer")
+        # Exclusivity must re-close after takeover: a third agent is refused.
+        # This proves the takeover UPDATE cleared lease_expires_at — without it
+        # C could steal work B is actively doing, and every other test still passes.
+        status, body = self.request("POST", f"/v1/messages/{mid}/claim", {"actor": "latecomer"}, api_key="key-a")
+        self.assertEqual(status, 409, body)
 
     def test_worker_sweep_returns_expired_lease_to_unclaimed(self) -> None:
         cid, mid = self._post_task()
