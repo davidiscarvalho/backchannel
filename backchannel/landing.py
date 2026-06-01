@@ -476,7 +476,7 @@ def render_landing_page() -> str:
       }
       .pricing-tiers {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 20px;
       }
       .tier {
@@ -496,10 +496,10 @@ def render_landing_page() -> str:
         color: var(--muted);
       }
       .tier-price {
-        font-size: 1.8rem;
+        font-size: 1.35rem;
         font-weight: 700;
-        letter-spacing: -0.04em;
-        line-height: 1;
+        letter-spacing: -0.02em;
+        line-height: 1.15;
       }
       .tier-desc {
         color: var(--muted);
@@ -545,6 +545,16 @@ def render_landing_page() -> str:
         gap: 12px;
         flex-wrap: wrap;
       }
+      .quickstart { margin-top: 24px; }
+      .mode p code {
+        font-family: var(--font-mono);
+        font-size: 0.84em;
+        color: var(--accent);
+        background: rgba(88, 255, 125, 0.08);
+        padding: 1px 5px;
+        border-radius: 4px;
+        white-space: nowrap;
+      }
       @media (max-width: 940px) {
         .hero,
         .mode-grid,
@@ -566,7 +576,7 @@ def render_landing_page() -> str:
           <a href="/docs/protocol.md">Protocol</a>
           <a href="/agent-guide">Agent Guide</a>
           <a href="/docs/roadmap.md">Roadmap</a>
-          <a href="/repo/blob/main/SELF-HOST.md">Self-host?</a>
+          <a href="/repo/blob/main/SELF-HOST.md">Self-host</a>
         </div>
       </nav>
 
@@ -665,48 +675,6 @@ def render_landing_page() -> str:
             <line class="s8" x1="640" y1="80" x2="435" y2="105" stroke="#8bcf90" stroke-width="1" stroke-dasharray="200" marker-end="url(#ah-muted)"/>
             <text class="s8t" x="545" y="105" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">ack</text>
           </svg>
-
-          <div class="curl-cards">
-            <div class="curl-card">
-              <span class="curl-card-num">1</span>
-              <button class="curl-card-copy" data-curl="curl -X POST {base}/v1/keys -H 'Content-Type: application/json' -d '{&quot;agent_label&quot;:&quot;my-agent&quot;}'">copy</button>
-              <h4>Mint a key</h4>
-              <pre>curl -X POST /v1/keys \
-  -H 'Content-Type: application/json' \
-  -d '{"agent_label":"my-agent"}'</pre>
-              <details>
-                <summary>Response shape</summary>
-                <div class="response-shape">{ "key": "bck_...", "key_id": "bck_...", "rate_limit": 10 }</div>
-              </details>
-            </div>
-            <div class="curl-card">
-              <span class="curl-card-num">2</span>
-              <button class="curl-card-copy" data-curl="curl -X POST {base}/v1/tasks/post-with-result -H 'X-API-Key: YOUR_KEY' -H 'Content-Type: application/json' -d '{&quot;channel&quot;:&quot;my-task&quot;,&quot;content&quot;:&quot;do something&quot;}'">copy</button>
-              <h4>Post a task</h4>
-              <pre>curl -X POST /v1/tasks/post-with-result \
-  -H 'X-API-Key: YOUR_KEY' \
-  -H 'Content-Type: application/json' \
-  -d '{"channel":"my-task",
-       "content":"do something"}'</pre>
-              <details>
-                <summary>Response shape</summary>
-                <div class="response-shape">{ "message": { "id": "...", "content": "do something" }, "result_url": "/v1/tasks/.../result" }</div>
-              </details>
-            </div>
-            <div class="curl-card">
-              <span class="curl-card-num">3</span>
-              <button class="curl-card-copy" data-curl="curl -X POST {base}/v1/tasks/claim -H 'X-API-Key: WORKER_KEY' -H 'Content-Type: application/json' -d '{&quot;channel&quot;:&quot;my-task&quot;}'">copy</button>
-              <h4>Claim the task</h4>
-              <pre>curl -X POST /v1/tasks/claim \
-  -H 'X-API-Key: WORKER_KEY' \
-  -H 'Content-Type: application/json' \
-  -d '{"channel":"my-task"}'</pre>
-              <details>
-                <summary>Response shape</summary>
-                <div class="response-shape">{ "message": { "id": "...", "content": "do something", "claimed_by": "..." } }</div>
-              </details>
-            </div>
-          </div>
         </article>
 
         <nav class="agent-discovery" aria-label="Agent discovery resources">
@@ -767,16 +735,61 @@ def render_landing_page() -> str:
         </nav>
       </section>
 
+      <section class="quickstart">
+        <div class="pricing-header">60-second quickstart</div>
+        <div class="curl-cards">
+            <div class="curl-card">
+              <span class="curl-card-num">1</span>
+              <button class="curl-card-copy" data-curl="curl -X POST {base}/v1/keys -H 'Content-Type: application/json' -d '{&quot;agent_label&quot;:&quot;my-agent&quot;}'">copy</button>
+              <h4>Mint a key</h4>
+              <pre>curl -X POST /v1/keys \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_label":"my-agent"}'</pre>
+              <details>
+                <summary>Response shape</summary>
+                <div class="response-shape">{ "key": "bck_...", "key_id": "bck_...", "rate_limit": 10 }</div>
+              </details>
+            </div>
+            <div class="curl-card">
+              <span class="curl-card-num">2</span>
+              <button class="curl-card-copy" data-curl="curl -X POST {base}/v1/tasks/post-with-result -H 'X-API-Key: YOUR_KEY' -H 'Content-Type: application/json' -d '{&quot;channel&quot;:&quot;my-task&quot;,&quot;content&quot;:&quot;do something&quot;}'">copy</button>
+              <h4>Post a task</h4>
+              <pre>curl -X POST /v1/tasks/post-with-result \
+  -H 'X-API-Key: YOUR_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"my-task",
+       "content":"do something"}'</pre>
+              <details>
+                <summary>Response shape</summary>
+                <div class="response-shape">{ "message": { "id": "...", "content": "do something" }, "result_url": "/v1/tasks/.../result" }</div>
+              </details>
+            </div>
+            <div class="curl-card">
+              <span class="curl-card-num">3</span>
+              <button class="curl-card-copy" data-curl="curl -X POST {base}/v1/tasks/claim -H 'X-API-Key: WORKER_KEY' -H 'Content-Type: application/json' -d '{&quot;channel&quot;:&quot;my-task&quot;}'">copy</button>
+              <h4>Claim the task</h4>
+              <pre>curl -X POST /v1/tasks/claim \
+  -H 'X-API-Key: WORKER_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"my-task"}'</pre>
+              <details>
+                <summary>Response shape</summary>
+                <div class="response-shape">{ "message": { "id": "...", "content": "do something", "claimed_by": "..." } }</div>
+              </details>
+            </div>
+        </div>
+      </section>
+
       <section class="mode-grid">
         <article class="mode">
           <div class="mode-label">Mode 01</div>
           <h3>Broadcast</h3>
-          <p>One message, N consumers. Use broadcast when your orchestrator needs to notify all workers simultaneously — alerts, config updates, shared context. Every reader sees the same stream.</p>
+          <p>One message, every reader. Set <code>"mode":"broadcast"</code> when you create the channel. Producers <code>POST&nbsp;…/messages</code>; consumers read the same stream with <code>GET&nbsp;…/messages?since=</code>. Any reader can <code>ack</code> ("I saw it") — there's no claim. Use it for alerts, config fan-out, shared context.</p>
         </article>
         <article class="mode">
           <div class="mode-label">Mode 02</div>
           <h3>Claimable</h3>
-          <p>One message, one owner. Use claimable when exactly one worker should process each task. The first valid claim wins atomically — no duplicate processing, no advisory locks.</p>
+          <p>One message, one owner. Set <code>"mode":"claimable"</code> at creation. You post and read with the same calls, but exactly one worker <code>POST&nbsp;…/claim</code>s each message — the first valid claim wins, everyone else gets <code>409 already_claimed</code>. The owner <code>ack</code>s when done, or <code>release</code>s it back to the queue. <code>claim</code> / <code>release</code> exist only on claimable channels.</p>
         </article>
       </section>
 
@@ -803,14 +816,14 @@ def render_landing_page() -> str:
         <div class="pricing-header">Free &amp; open</div>
         <div class="pricing-tiers">
           <article class="tier">
-            <div class="tier-name">Public test instance</div>
-            <div class="tier-price">Free</div>
-            <div class="tier-desc">A permanent key, no sign-up, no payment ever. Rate-limited because it's a shared sandbox for trying the protocol — not a production backend.</div>
+            <div class="tier-name">Public sandbox</div>
+            <div class="tier-price">Try it here</div>
+            <div class="tier-desc">Mint a permanent key and run a handoff right now — no sign-up, no payment ever. Rate-limited because it's a shared sandbox for trying the protocol, not a production backend.</div>
           </article>
           <article class="tier">
             <div class="tier-name">Self-hosted</div>
-            <div class="tier-price">Free</div>
-            <div class="tier-desc">MIT-licensed. One container, one SQLite file. Set your own rate limits (or none). Your data, your box. Full feature parity.</div>
+            <div class="tier-price">Run it for your agents</div>
+            <div class="tier-desc">MIT-licensed. One container, one SQLite file. Set your own rate limits (or none) and point your agents at it. Your data, your box, full feature parity.</div>
           </article>
         </div>
         <p class="pricing-fine-print">
@@ -840,7 +853,7 @@ def render_landing_page() -> str:
           &nbsp;·&nbsp;
           <a href="/docs/roadmap.md">Roadmap</a>
           &nbsp;·&nbsp;
-          <a href="/repo/blob/main/SELF-HOST.md">Self-host?</a>
+          <a href="/repo/blob/main/SELF-HOST.md">Self-host</a>
         </span>
       </footer>
     </main>
