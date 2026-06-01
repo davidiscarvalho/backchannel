@@ -745,7 +745,9 @@ def render_landing_page() -> str:
           A queue makes two agents share infrastructure you both wire up.
           Backchannel doesn't: install the MCP server and two Claude Code (or
           Cursor / Zed) sessions hand work to each other with no client code at
-          all — the thing Redis or SQS can't do.
+          all — the thing Redis or SQS can't do. On one machine both sessions
+          share an auto-minted key, so handoff-by-name just works; across
+          machines, share a key or discover the channel and request in.
         </p>
         <div class="curl-cards">
             <div class="curl-card">
