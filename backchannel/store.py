@@ -2813,11 +2813,14 @@ class BackchannelStore:
 
             avg_row = conn.execute(
                 """
-                SELECT AVG(ack.occurred_at - claim.occurred_at) * 1000 as avg_ms
-                FROM message_events claim
-                JOIN message_events ack ON ack.message_id = claim.message_id
-                    AND ack.event_type = 'ack'
-                WHERE claim.channel_id = ? AND claim.event_type = 'claim'
+                SELECT AVG((julianday(ack.occurred_at) - julianday(c.claim_at)) * 86400000.0) as avg_ms
+                FROM message_events ack
+                JOIN (
+                    SELECT message_id, MAX(occurred_at) AS claim_at
+                    FROM message_events WHERE event_type = 'claim'
+                    GROUP BY message_id
+                ) c ON c.message_id = ack.message_id
+                WHERE ack.channel_id = ? AND ack.event_type = 'ack'
                 """,
                 (channel_id,),
             ).fetchone()

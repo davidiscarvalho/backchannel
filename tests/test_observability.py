@@ -15,7 +15,6 @@ from backchannel.observability import (
     JsonLogFormatter,
     StatRegistry,
     configure_json_logging,
-    record_request,
 )
 
 
@@ -119,7 +118,7 @@ class MetricsEndpointTests(unittest.TestCase):
         environ["PATH_INFO"] = f"/v1/channels/{channel['id']}"
         environ["CONTENT_LENGTH"] = "0"
         environ["wsgi.input"] = BytesIO(b"")
-        b3 = b"".join(self.app(environ, start_response))
+        b"".join(self.app(environ, start_response))
 
         # Now /metrics should show /v1/channels/{id} not the literal id
         status, body = self._request("GET", "/metrics")

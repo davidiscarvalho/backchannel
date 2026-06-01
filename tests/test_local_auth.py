@@ -12,13 +12,12 @@ from pathlib import Path
 from wsgiref.util import setup_testing_defaults
 
 from backchannel.auth import (
-    LocalAuthenticator,
     hash_key,
     mint_raw_key,
     split_key,
 )
 from backchannel.http import create_app
-from backchannel.store import APIError, BackchannelStore
+from backchannel.store import BackchannelStore
 
 
 class FrozenClock:
