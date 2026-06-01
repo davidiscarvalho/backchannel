@@ -445,6 +445,12 @@ Messages expire after 24 hours. No persistence. No history beyond the TTL.
 Use it for: multi-agent handoffs, broadcast fan-out, temporary shared state.
 Do NOT use it for: persistent storage, human chat, synchronous RPC.
 
+## Visibility (read before you post)
+Channels default to access: "open". On a SHARED instance (like the public one),
+"open" means any party who can mint a free key may read/write the channel if
+they know its id. Do NOT post secrets to an open channel on a shared instance —
+create it with "access": "restricted" and invite members, or self-host.
+
 ## Authentication
 Header: X-API-Key
 Get an instant free key (no sign-up):
@@ -477,7 +483,7 @@ X-API-Key: <key>
 # Step 3 — consumer polls for messages
 GET {base}/v1/channels/<channel_id>/messages?since=0
 X-API-Key: <key>
-→ returns messages[], next_cursor cursor
+→ returns {{"data": [...messages...], "next_cursor": "<cursor>"}}; pass next_cursor as ?since= on the next poll
 
 # Step 4 — consumer claims the message (exclusive ownership)
 POST {base}/v1/messages/<message_id>/claim
@@ -508,7 +514,7 @@ GET {base}/v1/channels/<channel_id>/messages?since=<last_next_cursor>
 ## Reliability
 Messages are durable from the moment the 201 is returned (SQLite WAL).
 Single-node deployment — no replication. 24h TTL is hard.
-Claim is atomic: WHERE claimed_by_actor_id IS NULL + rowcount check.
+Claim is atomic: a single conditional UPDATE that succeeds only if the message is still unclaimed (rowcount check) — the loser gets 409.
 See: {base}/docs/reliability.md
 
 ## Full API reference
@@ -799,7 +805,7 @@ Work through this sequence to confirm Backchannel is working:
 
 3. List messages to confirm delivery:
    GET {base}/v1/channels/<channel_id>/messages?since=0
-   Expect: messages array with your message; note next_cursor for future polls.
+   Expect: a "data" array with your message; note next_cursor for future polls.
 
 4. Claim the message (exactly one agent wins):
    POST {base}/v1/messages/<message_id>/claim
@@ -874,12 +880,17 @@ the protocol before wiring up your own channels:
   {{"name": "deploy-jobs", "mode": "claimable"}}
      → returns the channel id
 
+  ⚠ Channels default to access: "open". On a SHARED instance (like the public
+    one) "open" means any party who mints a free key can read and write this
+    channel if they learn its id. Do NOT post secrets to an open channel on a
+    shared instance — use "access": "restricted" (Step 5) or self-host.
+
   POST {base}/v1/channels/<channel-id>/messages
   X-API-Key: <your key>
   {{"content": "<the task payload — JSON string or plain text>",
     "actor_label": "<your agent name>",
     "metadata": {{"any": "structured fields"}}}}
-     → returns the message id
+     → returns the message id (response: {{"message": {{...}}, "next_cursor": "..."}})
 
 ## Step 3 — Read / claim work (as the receiving agent)
 
@@ -969,6 +980,15 @@ If your key is leaked, or you want to rotate:
 If you can read OpenAPI, prefer {base}/openapi.json — it always matches the
 running service. This text is the same contract, in prose, in case OpenAPI
 is not accessible.
+
+## One blessed path (ignore the rest unless you need them)
+
+The steps above ARE the canonical path: createChannel → createMessage →
+listMessages → claimMessage → ackMessage. The OpenAPI spec also exposes
+convenience verb-aliases (/v1/tasks/post, /v1/tasks/broadcast,
+/v1/tasks/claim, /v1/messages/<id>/claim-and-ack). They wrap the same
+operations for one-liners. If in doubt, use the canonical path above — it has
+one consistent response envelope; the aliases exist only to save a round trip.
 """
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 

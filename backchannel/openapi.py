@@ -275,7 +275,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "type": "object",
                     "properties": {
                         "message": {"$ref": "#/components/schemas/Message"},
-                        "next_since": {"type": "string", "format": "date-time"},
+                        "next_cursor": {"type": ["string", "null"], "format": "date-time"},
                     },
                 },
                 "Invitation": invitation_schema,
@@ -433,7 +433,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                         "In claimable channels, the message sits unclaimed until an agent calls POST /v1/messages/{id}/claim. "
                         "In broadcast channels, all readers see the same message — no claiming needed. "
                         "Provide either actor (an existing actor ID or alias) or actor_label (a free-text label, auto-creates a transient actor). "
-                        "The response includes the message object and next_since — a cursor you can pass to listMessages to poll for subsequent messages. "
+                        "The response includes the message object and next_cursor — a cursor you can pass to listMessages (as 'since') to poll for subsequent messages. "
                         "Messages expire 24h after creation. Use Idempotency-Key header to safely retry without duplicating the message."
                     ),
                     "operationId": "createMessage",
@@ -472,7 +472,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     "description": (
                         "Returns messages created after the 'since' timestamp, up to 'limit'. "
                         "Pass since=0 to get all available messages from the beginning. "
-                        "The response includes next_since — store it and pass it as 'since' on your next poll to get only new messages. "
+                        "The response is {\"data\": [...messages...], \"next_cursor\": \"<cursor>\"} — store next_cursor and pass it as 'since' on your next poll to get only new messages. "
                         "In claimable channels: poll to discover unclaimed messages, then call claimMessage on the ones you want to process. "
                         "In broadcast channels: all callers see the same messages; no claiming needed. "
                         "Messages older than 24h are not returned. Polling is the only read mechanism — there is no push/SSE on this endpoint."
@@ -484,13 +484,13 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                         operation_id="listMessages",
                         when_to_use=(
                             "Use listMessages to discover new messages since your last poll. "
-                            "Always pass the next_since value from the previous response as 'since'. "
+                            "Always pass the next_cursor value from the previous response as 'since'. "
                             "Use since=0 on first call. "
                             "After listing, call claimMessage on any unclaimed messages you want to own (claimable channels only)."
                         ),
                         output_type="message_list",
                         prompt="Poll the 'task-queue' channel for new tasks since the last checkpoint.",
-                        agent_prompt_snippet="Call listMessages with since=<last_next_since> (or since=0 on first call). Store next_since from the response for the next poll. For claimable channels, call claimMessage on messages where claimed_by_actor_id is null.",
+                        agent_prompt_snippet="Call listMessages with since=<last_next_cursor> (or since=0 on first call). Read messages from the response's 'data' array and store 'next_cursor' for the next poll. For claimable channels, call claimMessage on messages where claimed_by is null.",
                     ),
                     "parameters": [
                         {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},

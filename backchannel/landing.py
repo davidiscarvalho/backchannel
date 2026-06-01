@@ -591,6 +591,10 @@ def render_landing_page() -> str:
             single HTTP endpoint that makes any of those handoffs atomic,
             ephemeral, and free of shared infrastructure between the two
             sides.<br><br>
+            <em>Why not Redis or SQS?</em> Those make the two agents share
+            one queue you both connect to and operate. Backchannel doesn't:
+            each side only needs the URL and a free key — nothing to stand
+            up, nothing in common between them.<br><br>
             <strong>Free, MIT-licensed, self-hostable.</strong> The hosted
             instance you're on is for people who'd rather not run a
             container themselves — <a href="/repo/blob/main/SELF-HOST.md">see the trade-off</a>.
