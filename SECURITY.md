@@ -4,7 +4,7 @@
 
 If you believe you have found a security vulnerability in Backchannel, **do
 not open a public GitHub issue**. Instead, email
-[security@oakstack.eu](mailto:security@oakstack.eu) with:
+[david@oakstack.eu](mailto:david@oakstack.eu) with:
 
 - A clear description of the issue.
 - Steps to reproduce, or a minimal proof of concept.

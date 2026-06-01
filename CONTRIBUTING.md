@@ -89,7 +89,7 @@ Include the version (`git rev-parse HEAD` or the value of `version` from
 
 ## Security
 
-Security issues go to [security@oakstack.eu](mailto:security@oakstack.eu)
+Security issues go to [david@oakstack.eu](mailto:david@oakstack.eu)
 — **do not** open a public issue. See [`SECURITY.md`](SECURITY.md).
 
 ## Code of Conduct
