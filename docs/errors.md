@@ -95,9 +95,9 @@ Every error response body includes `"error"` (the code below), `"message"` (huma
 ---
 
 ## content_too_large
-**HTTP 422.** Message `content` exceeds the 64KB limit.
+**HTTP 422.** Message `content` exceeds the size limit.
 
-- **Cause:** The `content` field in `POST /v1/channels/{id}/messages` is larger than 65,536 bytes.
+- **Cause:** The `content` field in `POST /v1/channels/{id}/messages` is larger than the instance's limit — 10,000 UTF-8 bytes by default (≈10k ASCII chars or ~2,500 four-byte emoji). Self-hosters set it with `BACKCHANNEL_MAX_MESSAGE_BYTES`; the live value is on `GET /health` as `max_content_bytes`.
 - **Action:** Truncate or compress the content. Store large payloads externally and pass a reference URL in `content`.
 - **Retryable:** No (with the same payload).
 - **Response includes:** `max_content_bytes`, `received_bytes`.

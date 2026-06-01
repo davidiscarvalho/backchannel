@@ -196,6 +196,34 @@ class BackchannelProtocolTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "text/markdown; charset=utf-8")
         self.assertIn("## Non-Goals", body)
 
+    def test_claim_without_actor_uses_default_and_unknown_name_autocreates(self) -> None:
+        # Headline low-friction path: claim works with no actor field at all,
+        # and claiming by an arbitrary name auto-creates that actor.
+        queue = self.create_channel("Frictionless Queue", "claimable")
+
+        status, created = self.request(
+            "POST", f"/v1/channels/{queue['id']}/messages", {"content": "task-1"}
+        )
+        self.assertEqual(status, 201)
+        msg1 = created["message"]["id"]
+
+        # claim with an empty body — no 'actor' required
+        status, claimed = self.request("POST", f"/v1/messages/{msg1}/claim", {})
+        self.assertEqual(status, 200, claimed)
+        self.assertEqual(claimed["status"], "claimed")
+        self.assertTrue(claimed["message"]["claimed_by"]["name"])
+
+        # claim a second message by an arbitrary, never-registered name
+        status, created2 = self.request(
+            "POST", f"/v1/channels/{queue['id']}/messages", {"content": "task-2"}
+        )
+        msg2 = created2["message"]["id"]
+        status, claimed2 = self.request(
+            "POST", f"/v1/messages/{msg2}/claim", {"actor": "ad-hoc-worker"}
+        )
+        self.assertEqual(status, 200, claimed2)
+        self.assertEqual(claimed2["message"]["claimed_by"]["name"], "ad-hoc-worker")
+
     def test_claimable_channel_enforces_single_claim_and_tracks_acks(self) -> None:
         queue = self.create_channel("Queue Jobs", "claimable")
         worker_a = self.create_actor("worker-a")

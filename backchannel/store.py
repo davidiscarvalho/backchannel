@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import sqlite3
 import uuid
@@ -720,7 +721,12 @@ class BackchannelStore:
             conn.commit()
             return self._serialize_actor(conn, self._get_actor_by_id(conn, actor["id"]))
 
-    _MAX_CONTENT_BYTES = 65536  # 64 KB
+    # Max message body size in UTF-8 bytes. 10000 bytes = 10k ASCII chars or
+    # ~2500 four-byte emoji. Operators tune via BACKCHANNEL_MAX_MESSAGE_BYTES.
+    try:
+        _MAX_CONTENT_BYTES = int(os.environ.get("BACKCHANNEL_MAX_MESSAGE_BYTES", "10000"))
+    except ValueError:
+        _MAX_CONTENT_BYTES = 10000
 
     def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> MessageEnvelope:
         content = self._required_string(payload, "content")
@@ -729,7 +735,7 @@ class BackchannelStore:
             raise APIError(
                 422,
                 "content_too_large",
-                f"Message content exceeds the {self._MAX_CONTENT_BYTES // 1024}KB limit",
+                f"Message content exceeds the {self._MAX_CONTENT_BYTES}-byte limit",
                 {"max_content_bytes": self._MAX_CONTENT_BYTES, "received_bytes": len(content_bytes)},
             )
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
@@ -914,7 +920,7 @@ class BackchannelStore:
             }
 
     def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        actor_identifier = self._required_string(payload, "actor")
+        actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
         with self.connect() as conn:
@@ -925,7 +931,7 @@ class BackchannelStore:
             channel = self._get_channel_by_id(conn, message["channel_id"])
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
-            actor = self._resolve_actor(conn, actor_identifier)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
             existing = conn.execute(
                 """
                 SELECT id
@@ -958,7 +964,7 @@ class BackchannelStore:
             }
 
     def claim_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        actor_identifier = self._required_string(payload, "actor")
+        actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
         with self.connect() as conn:
@@ -971,7 +977,7 @@ class BackchannelStore:
                 raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
-            actor = self._resolve_actor(conn, actor_identifier)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
             if message["claimed_by_actor_id"]:
                 if message["claimed_by_actor_id"] == actor["id"]:
                     ack_exists = conn.execute(
@@ -1010,7 +1016,7 @@ class BackchannelStore:
             return {"status": "claimed", "message": self._serialize_message(conn, refreshed)}
 
     def release_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        actor_identifier = self._required_string(payload, "actor")
+        actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         with self.connect() as conn:
             message = self._get_message(conn, message_id)
             if parse_timestamp(message["expires_at"]) <= self.now():
@@ -1021,7 +1027,7 @@ class BackchannelStore:
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
             if not message["claimed_by_actor_id"]:
                 raise APIError(409, "not_claimed", "This message is not claimed and cannot be released")
-            actor = self._resolve_actor(conn, actor_identifier)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
             if message["claimed_by_actor_id"] != actor["id"]:
                 raise APIError(403, "forbidden", "Only the claiming actor can release this message")
             conn.execute(
@@ -1033,7 +1039,7 @@ class BackchannelStore:
             return {"status": "released", "message": self._serialize_message(conn, refreshed)}
 
     def claim_with_lease(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        actor_identifier = self._required_string(payload, "actor")
+        actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         lease_seconds = payload.get("lease_seconds", 300)
         if not isinstance(lease_seconds, int) or lease_seconds < 30 or lease_seconds > 3600:
             raise APIError(422, "invalid_lease_seconds", "lease_seconds must be an integer between 30 and 3600")
@@ -1050,7 +1056,7 @@ class BackchannelStore:
             if message["claimed_by_actor_id"]:
                 raise APIError(409, "already_claimed", "This message has already been claimed")
 
-            actor = self._resolve_actor(conn, actor_identifier)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
             now = self.now()
             claimed_at = to_timestamp(now)
             lease_token = str(uuid.uuid4())
@@ -1723,6 +1729,64 @@ class BackchannelStore:
             raise APIError(404, "actor_not_found", f"Unknown actor '{identifier}'")
         return actor
 
+    def _owner_for_key(self, conn: sqlite3.Connection, key_id: str) -> tuple[str | None, str | None]:
+        row = conn.execute(
+            "SELECT owner_id, agent_label FROM api_keys WHERE key_id = ?",
+            (key_id,),
+        ).fetchone()
+        if row is None:
+            return None, None
+        return row["owner_id"], row["agent_label"]
+
+    def _resolve_or_create_actor(
+        self, conn: sqlite3.Connection, identifier: str | None, key_id: str
+    ) -> sqlite3.Row:
+        """Resolve an actor by id, alias, or name (name scoped to the key's
+        owner). If `identifier` is empty, fall back to the key's own default
+        actor (named after the agent label). The actor is auto-created when it
+        does not exist yet, so callers never have to pre-register one — claim,
+        ack and release just work with a plain name or with no actor at all."""
+        owner_id, agent_label = self._owner_for_key(conn, key_id)
+        name = (identifier or "").strip()
+        if not name:
+            name = agent_label or owner_id or "default"
+
+        # 1. exact id
+        actor = conn.execute("SELECT * FROM actors WHERE id = ?", (name,)).fetchone()
+        if actor is not None:
+            return actor
+        # 2. alias
+        actor = conn.execute(
+            """
+            SELECT a.*
+            FROM actor_aliases aa
+            JOIN actors a ON a.id = aa.actor_id
+            WHERE aa.alias = ?
+            """,
+            (name,),
+        ).fetchone()
+        if actor is not None:
+            return actor
+        # 3. name, scoped to this key's owner (avoids cross-tenant collisions)
+        if owner_id is not None:
+            actor = conn.execute(
+                "SELECT * FROM actors WHERE name = ? AND owner_id = ? ORDER BY created_at LIMIT 1",
+                (name, owner_id),
+            ).fetchone()
+            if actor is not None:
+                return actor
+        # 4. create it (within the caller's transaction)
+        actor_id = str(uuid.uuid4())
+        now = to_timestamp(self.now())
+        conn.execute(
+            """
+            INSERT INTO actors (id, owner_key_id, owner_id, name, description, metadata, created_at, updated_at)
+            VALUES (?, ?, ?, ?, '', '{}', ?, ?)
+            """,
+            (actor_id, key_id, owner_id, name, now, now),
+        )
+        return conn.execute("SELECT * FROM actors WHERE id = ?", (actor_id,)).fetchone()
+
     def _replace_channel_links(self, conn: sqlite3.Connection, channel_id: str, related_channels: Any) -> None:
         if related_channels is None:
             return
@@ -2268,6 +2332,18 @@ class BackchannelStore:
                     team_id, team_name, to_timestamp(now), expires_at,
                 ),
             )
+            # Provision a default actor so claim/ack/release work immediately
+            # and the new key sees an identity in the console. Named after the
+            # agent label; claim/ack default to it when no actor is given.
+            default_actor_name = agent_label or owner_id
+            if default_actor_name:
+                conn.execute(
+                    """
+                    INSERT INTO actors (id, owner_key_id, owner_id, name, description, metadata, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, '', '{}', ?, ?)
+                    """,
+                    (str(uuid.uuid4()), key_id, owner_id, default_actor_name, to_timestamp(now), to_timestamp(now)),
+                )
             conn.commit()
         return {
             "key_id": key_id,

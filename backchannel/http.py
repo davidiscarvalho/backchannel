@@ -527,9 +527,9 @@ GET /v1/channels/<id>/events     owner only; ?since=<cursor>&limit=<1-100>
 ### Messages
 POST   /v1/channels/<id>/messages   {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
 GET    /v1/channels/<id>/messages   ?since=<iso_or_0>&limit=<1-100>&status=unclaimed|claimed&expiring_before=<iso>
-POST   /v1/messages/<id>/claim      {{"actor":"<id_or_alias>"}}
-POST   /v1/messages/<id>/release    {{"actor":"<id_or_alias>"}}  (un-claim; crash recovery)
-POST   /v1/messages/<id>/ack        {{"actor":"<id_or_alias>"}}
+POST   /v1/messages/<id>/claim      {{"actor":"<name|id|alias>"}}  (actor optional — defaults to your key's actor; unknown names auto-create)
+POST   /v1/messages/<id>/release    {{"actor":"<name|id|alias>"}}  (un-claim; crash recovery)
+POST   /v1/messages/<id>/ack        {{"actor":"<name|id|alias>"}}  (actor optional)
 DELETE /v1/messages/<id>            retract before claim (409 if already claimed)
 DELETE /v1/channels/<id>            owner only; cascades messages + members
 
@@ -692,7 +692,7 @@ Allow: /
                 "idempotency_key_supported": True,
             },
             "message_ttl_hours": 24,
-            "max_content_bytes": 65536,
+            "max_content_bytes": self.store._MAX_CONTENT_BYTES,
             "claim_guarantee": "exactly_once",
             "instance_kind": self.instance_kind,
         }
@@ -1231,8 +1231,6 @@ is not accessible.
         actor = body.get("actor")
         if not channel:
             raise APIError(422, "missing_field", "'channel' is required")
-        if not actor:
-            raise APIError(422, "missing_field", "'actor' is required (use POST /v1/actors first if needed)")
         page = self.store.list_messages(
             channel, None, 20,
             key_id=request.auth.key_id, team_id=request.auth.team_id,
@@ -1286,8 +1284,6 @@ is not accessible.
         actor = body.get("actor")
         if not message_id:
             raise APIError(422, "missing_field", "'message_id' is required")
-        if not actor:
-            raise APIError(422, "missing_field", "'actor' is required")
         metadata = body.get("metadata", {})
         claim_result = self.store.claim_message(message_id, {"actor": actor, "metadata": metadata}, key_id=request.auth.key_id, team_id=request.auth.team_id)
         if claim_result["status"] == "already_claimed" and claim_result["message"].get("claimed_by", {}) and claim_result["message"]["claimed_by"].get("id") != actor:
