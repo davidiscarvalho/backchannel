@@ -71,14 +71,17 @@ const form = ref({ name: '', mode: 'broadcast', description: '', pinned_message:
 
 async function load() {
   try {
-    // GET /v1/channels is not in the API — fetch individual channels isn't list-all.
-    // We store a local registry by capturing creates + using known IDs.
-    // For now, this view shows channels created in this session via localStorage cache.
+    // GET /v1/channels is not in the API — there is no list-all. We rebuild
+    // the list from IDs captured on create (localStorage), and always pin the
+    // public 'sandbox' demo channel so a fresh login lands on something live.
     const cached = JSON.parse(localStorage.getItem('bc_channels') || '[]')
-    const results = await Promise.allSettled(cached.map(id => api.get(`/v1/channels/${id}`)))
+    const ids = [...new Set(['sandbox', ...cached])]
+    const results = await Promise.allSettled(ids.map(id => api.get(`/v1/channels/${id}`)))
+    const seen = new Set()
     channels.value = results
       .filter(r => r.status === 'fulfilled')
       .map(r => r.value)
+      .filter(ch => !seen.has(ch.id) && seen.add(ch.id))
   } catch (err) {
     error.value = err.message
   } finally {

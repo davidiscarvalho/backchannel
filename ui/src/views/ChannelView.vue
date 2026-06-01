@@ -28,13 +28,14 @@
       <div class="form-group">
         <label>Content</label>
         <textarea v-model="postForm.content" rows="2" placeholder="Message content…" />
+        <div class="char-count" :class="{ over: contentBytes > MAX_BYTES }">{{ contentBytes }} / {{ MAX_BYTES }}</div>
       </div>
       <div class="form-group">
         <label>Actor (id or alias, optional)</label>
         <input v-model="postForm.actor" placeholder="worker-7" />
       </div>
       <p v-if="postError" class="error">{{ postError }}</p>
-      <button class="btn" @click="postMessage" :disabled="posting">{{ posting ? 'Posting…' : 'Post' }}</button>
+      <button class="btn" @click="postMessage" :disabled="posting || contentBytes > MAX_BYTES">{{ posting ? 'Posting…' : 'Post' }}</button>
     </div>
 
     <div v-if="msgLoading" class="muted">Loading messages…</div>
@@ -56,13 +57,17 @@
       </div>
     </div>
   </div>
+  <div v-else class="muted">This channel could not be loaded.</div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { api } from '../api.js'
 
+// Server default cap (BACKCHANNEL_MAX_MESSAGE_BYTES); counted in UTF-8 bytes
+// so the count matches exactly what the server enforces.
+const MAX_BYTES = 10000
 const route = useRoute()
 const channel = ref(null)
 const messages = ref([])
@@ -73,12 +78,15 @@ const msgError = ref('')
 const postForm = ref({ content: '', actor: '' })
 const posting = ref(false)
 const postError = ref('')
+const contentBytes = computed(() => new TextEncoder().encode(postForm.value.content).length)
 
 async function loadChannel() {
   try {
     channel.value = await api.get(`/v1/channels/${route.params.id}`)
   } catch (err) {
-    error.value = err.message
+    error.value = err.status === 404
+      ? 'Channel not found — it may have been deleted, or you may not have access.'
+      : (err.message || 'Could not load this channel.')
   } finally {
     loading.value = false
   }
@@ -126,6 +134,8 @@ onMounted(async () => {
 
 <style scoped>
 .back { font-size: 12px; }
+.char-count { font-size: 11px; color: var(--muted); text-align: right; margin-top: 4px; font-family: var(--font-mono); }
+.char-count.over { color: var(--danger, #ff5c5c); }
 .pinned { border-color: rgba(88,255,125,0.35); }
 .msg-card { margin-bottom: 8px; }
 .meta-block {

@@ -13,8 +13,10 @@ async function request(method, path, body = null) {
   })
 
   if (!res.ok) {
-    const data = await res.json().catch(() => ({ message: res.statusText }))
-    const err = new Error(data.message || res.statusText)
+    const data = await res.json().catch(() => ({}))
+    // HTTP/2 has no statusText, so fall back to the status code to avoid
+    // throwing an Error with an empty message (which renders as a blank page).
+    const err = new Error(data.message || res.statusText || `Request failed (HTTP ${res.status})`)
     err.status = res.status
     err.data = data
     throw err
