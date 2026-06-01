@@ -991,25 +991,38 @@ class BackchannelStore:
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
             actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
-            if message["claimed_by_actor_id"]:
-                if message["claimed_by_actor_id"] == actor["id"]:
-                    ack_exists = conn.execute(
-                        "SELECT 1 FROM message_events WHERE message_id = ? AND event_type = 'ack' LIMIT 1",
-                        (message_id,),
-                    ).fetchone()
+            now = self.now()
+            previous_holder_id = message["claimed_by_actor_id"]
+            if previous_holder_id:
+                ack_exists = conn.execute(
+                    "SELECT 1 FROM message_events WHERE message_id = ? AND event_type = 'ack' LIMIT 1",
+                    (message_id,),
+                ).fetchone()
+                lease_expires_at = message["lease_expires_at"]
+                lease_expired = lease_expires_at is not None and parse_timestamp(lease_expires_at) <= now
+                if previous_holder_id == actor["id"]:
                     refreshed = self._get_message(conn, message_id)
                     if ack_exists:
                         return {"status": "already_acknowledged", "message": self._serialize_message(conn, refreshed)}
                     return {"status": "already_claimed", "message": self._serialize_message(conn, refreshed)}
-                raise APIError(409, "already_claimed", "This message has already been claimed")
+                # A different actor may only take over a claim whose lease has
+                # expired and was never acked — this is the crash-recovery path.
+                if ack_exists or not lease_expired:
+                    raise APIError(409, "already_claimed", "This message has already been claimed")
 
-            claimed_at = to_timestamp(self.now())
+            claimed_at = to_timestamp(now)
             cursor = conn.execute(
-                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ? WHERE id = ? AND claimed_by_actor_id IS NULL",
-                (actor["id"], claimed_at, message_id),
+                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, lease_token = NULL, lease_expires_at = NULL "
+                "WHERE id = ? AND (claimed_by_actor_id IS NULL OR (lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
+                (actor["id"], claimed_at, message_id, claimed_at),
             )
             if cursor.rowcount == 0:
                 raise APIError(409, "already_claimed", "This message has already been claimed")
+            if previous_holder_id and previous_holder_id != actor["id"]:
+                # Takeover of an expired lease — note the prior holder on the
+                # claim event so the recovery is auditable within the allowed
+                # event types ('ack', 'claim').
+                metadata = {**metadata, "reclaimed_from": previous_holder_id}
             conn.execute(
                 """
                 INSERT INTO message_events (id, message_id, channel_id, actor_id, event_type, metadata, occurred_at)
@@ -1066,21 +1079,33 @@ class BackchannelStore:
             if channel["mode"] != "claimable":
                 raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
-            if message["claimed_by_actor_id"]:
-                raise APIError(409, "already_claimed", "This message has already been claimed")
-
             actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
             now = self.now()
+            previous_holder_id = message["claimed_by_actor_id"]
+            if previous_holder_id:
+                ack_exists = conn.execute(
+                    "SELECT 1 FROM message_events WHERE message_id = ? AND event_type = 'ack' LIMIT 1",
+                    (message_id,),
+                ).fetchone()
+                existing_lease = message["lease_expires_at"]
+                lease_expired = existing_lease is not None and parse_timestamp(existing_lease) <= now
+                # Allow re-leasing only an expired, un-acked claim (crash recovery).
+                if ack_exists or not lease_expired:
+                    raise APIError(409, "already_claimed", "This message has already been claimed")
+
             claimed_at = to_timestamp(now)
             lease_token = str(uuid.uuid4())
             lease_expires_at = to_timestamp(now + timedelta(seconds=lease_seconds))
 
             cursor = conn.execute(
-                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, lease_token = ?, lease_expires_at = ? WHERE id = ? AND claimed_by_actor_id IS NULL",
-                (actor["id"], claimed_at, lease_token, lease_expires_at, message_id),
+                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, lease_token = ?, lease_expires_at = ? "
+                "WHERE id = ? AND (claimed_by_actor_id IS NULL OR (lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
+                (actor["id"], claimed_at, lease_token, lease_expires_at, message_id, claimed_at),
             )
             if cursor.rowcount == 0:
                 raise APIError(409, "already_claimed", "This message has already been claimed")
+            if previous_holder_id and previous_holder_id != actor["id"]:
+                metadata = {**metadata, "reclaimed_from": previous_holder_id}
             conn.execute(
                 "INSERT INTO message_events (id, message_id, channel_id, actor_id, event_type, metadata, occurred_at) VALUES (?, ?, ?, ?, 'claim', ?, ?)",
                 (str(uuid.uuid4()), message_id, channel["id"], actor["id"], json.dumps(metadata, sort_keys=True), claimed_at),
@@ -1115,6 +1140,32 @@ class BackchannelStore:
             )
             conn.commit()
             return {"lease_token": lease_token, "expires_at": new_expires_at}
+
+    def reclaim_expired_leases(self) -> int:
+        """Release messages whose lease expired without an ack back into the
+        unclaimed pool, so another agent can pick them up. This is what makes
+        the 'auto-released if the holder crashes' guarantee true even when no
+        new claimer happens to race in. Returns the number reclaimed."""
+        now = to_timestamp(self.now())
+        reclaimed = 0
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, channel_id, claimed_by_actor_id FROM messages "
+                "WHERE lease_expires_at IS NOT NULL AND lease_expires_at <= ? "
+                "AND claimed_by_actor_id IS NOT NULL "
+                "AND id NOT IN (SELECT message_id FROM message_events WHERE event_type = 'ack')",
+                (now,),
+            ).fetchall()
+            for row in rows:
+                cur = conn.execute(
+                    "UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL, lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
+                    (row["id"], now),
+                )
+                if cur.rowcount:
+                    reclaimed += 1
+            conn.commit()
+        return reclaimed
 
     def delete_message(self, message_id: str, key_id: str, team_id: str | None = None) -> None:
         with self.connect() as conn:

@@ -76,6 +76,7 @@ def main() -> int:
     worker_parser = subparsers.add_parser("worker", help="Run the cleanup worker loop (for container deployments)")
     worker_parser.add_argument("--db", default="backchannel.db", help="SQLite database path")
     worker_parser.add_argument("--interval", default=86400, type=int, help="Seconds between cleanup runs (default: 86400 = 24h)")
+    worker_parser.add_argument("--lease-interval", default=60, type=int, help="Seconds between expired-lease reclaim sweeps (default: 60)")
 
     report_parser = subparsers.add_parser("audit-report", help="Inspect recent cleanup runs and archived messages")
     report_parser.add_argument("--db", default="backchannel.db", help="SQLite database path")
@@ -115,6 +116,10 @@ def main() -> int:
         # must keep the sandbox channel fresh even when --interval is large.
         heartbeat_check_interval = 30.0
         seconds_since_heartbeat = heartbeat_check_interval  # check on first slice
+        # Reclaim expired leases on their own cadence so a crashed claimer's
+        # work returns to the unclaimed pool promptly, independent of cleanup.
+        lease_check_interval = float(max(1, args.lease_interval))
+        seconds_since_lease_sweep = lease_check_interval  # sweep on first slice
         while not _shutdown.is_set():
             try:
                 summary = store.archive_and_cleanup_expired_records()
@@ -145,6 +150,15 @@ def main() -> int:
                 step = min(1.0, args.interval - slept)
                 time.sleep(step)
                 slept += step
+                seconds_since_lease_sweep += step
+                if seconds_since_lease_sweep >= lease_check_interval:
+                    seconds_since_lease_sweep = 0.0
+                    try:
+                        reclaimed = store.reclaim_expired_leases()
+                        if reclaimed:
+                            print(f"leases reclaimed={reclaimed}", flush=True)
+                    except Exception as exc:
+                        print(f"lease reclaim error: {exc}", flush=True)
                 seconds_since_heartbeat += step
                 if seconds_since_heartbeat >= heartbeat_check_interval:
                     seconds_since_heartbeat = 0.0
