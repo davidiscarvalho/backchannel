@@ -1031,7 +1031,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
         return self.json_response(201, channel)
 
     def get_channel(self, request: Request, identifier: str) -> Response:
-        channel = self.store.get_channel(identifier, key_id=request.auth.key_id, team_id=request.auth.team_id)
+        channel = self.store.get_channel(identifier, key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(200, channel)
 
     def discover_channels(self, request: Request) -> Response:
@@ -1102,7 +1102,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
         parsed_limit = None if limit is None else int(limit)
         status = request.query_value("status")
         expiring_before = request.query_value("expiring_before")
-        payload = self.store.list_messages(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id, team_id=request.auth.team_id, status=status, expiring_before=expiring_before)
+        payload = self.store.list_messages(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id, team_id=request.auth.team_id, status=status, expiring_before=expiring_before, owner_id=request.auth.owner_id)
         response = self.json_response(200, payload)
         if request.query_value("since") and not request.query_value("cursor"):
             response.extra_headers.append(("Deprecation", "true"))
@@ -1314,7 +1314,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
         page = self.store.list_messages(
             channel, None, 20,
             key_id=request.auth.key_id, team_id=request.auth.team_id,
-            status="unclaimed",
+            status="unclaimed", owner_id=request.auth.owner_id,
         )
         for msg in page.get("data", []):
             try:
@@ -1341,7 +1341,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
         limit = int(body.get("limit", 50))
         page = self.store.list_messages(
             channel, since, limit,
-            key_id=request.auth.key_id, team_id=request.auth.team_id,
+            key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id,
         )
         return self.json_response(200, page)
 
@@ -1487,6 +1487,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
                 1,
                 key_id=request.auth.key_id,
                 team_id=request.auth.team_id,
+                owner_id=request.auth.owner_id,
             )
         except APIError as exc:
             if exc.status == 404:

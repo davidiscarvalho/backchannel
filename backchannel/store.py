@@ -657,9 +657,9 @@ class BackchannelStore:
             channel = self._get_channel_by_id(conn, channel_id)
             return self._serialize_channel(conn, channel)
 
-    def get_channel(self, identifier: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
+    def get_channel(self, identifier: str, key_id: str, team_id: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id)
+            channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id, owner_id=owner_id)
             return self._serialize_channel(conn, channel)
 
     def _is_channel_member(self, conn: sqlite3.Connection, channel: sqlite3.Row, key_id: str) -> bool:
@@ -905,7 +905,7 @@ class BackchannelStore:
         message_id = str(uuid.uuid4())
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id, owner_id=owner_id)
             # Abuse controls (see _init_db). Checked before any write work.
             if "paused" in channel.keys() and channel["paused"]:
                 raise APIError(
@@ -996,7 +996,7 @@ class BackchannelStore:
             )
         return envelope
 
-    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None) -> dict[str, Any]:
+    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
         if page_size < 1 or page_size > 100:
             raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
@@ -1004,7 +1004,7 @@ class BackchannelStore:
             raise APIError(422, "invalid_status", "status must be 'unclaimed' or 'claimed'")
 
         with self.connect() as conn:
-            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id)
+            channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id, owner_id=owner_id)
             now = to_timestamp(self.now())
             params: list[Any] = [channel["id"], now]
             extra_clauses = ""
