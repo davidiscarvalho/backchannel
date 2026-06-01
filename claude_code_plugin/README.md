@@ -9,8 +9,8 @@ the agent-coordination tools directly.
 ## Install (once published)
 
 ```bash
-claude /plugin marketplace add oakstack/backchannel
-claude /plugin install backchannel@oakstack
+claude /plugin marketplace add davidiscarvalho/backchannel
+claude /plugin install backchannel
 ```
 
 ## Install (from source, today)

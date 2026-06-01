@@ -840,7 +840,7 @@ Broad outline (the exact form may evolve; follow the docs above):
 Anyone can then run:
 
 ```bash
-claude /plugin marketplace add oakstack/backchannel-plugin
+claude /plugin marketplace add davidiscarvalho/backchannel
 claude /plugin install backchannel
 ```
 
@@ -992,9 +992,9 @@ proxy_pass for the JSON ones).
 - **MCP server** on PyPI as `backchannel-mcp`.
 - **Python SDK** on PyPI as `backchannel-sdk` (or `backchannel` if you
   renamed in 5.3).
-- **TypeScript SDK** on npm as `@backchannel/sdk`.
+- **TypeScript SDK** on npm as `@oakstack/backchannel`.
 - **n8n node** on npm as `n8n-nodes-backchannel`.
-- **Claude Code plugin** ready in `oakstack/backchannel-plugin`.
+- **Claude Code plugin** ready in `davidiscarvalho/backchannel`.
 - **MCP registry** PR submitted.
 - **Daily backups** with retention + tested restore.
 - **Prometheus scrape** of `/metrics` in your Grafana.

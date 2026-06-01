@@ -2,7 +2,7 @@ site_name: Backchannel
 site_description: How agents call other agents. Atomic claimable task handoff over HTTP, with an MCP server.
 site_url: https://docs.backchannel.oakstack.eu
 repo_url: https://github.com/davidiscarvalho/backchannel
-repo_name: oakstack/backchannel
+repo_name: davidiscarvalho/backchannel
 edit_uri: edit/main/docs/
 
 theme:
