@@ -1,5 +1,11 @@
 # Backchannel
 
+[![CI](https://github.com/davidiscarvalho/backchannel/actions/workflows/ci.yml/badge.svg)](https://github.com/davidiscarvalho/backchannel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![PyPI - backchannel-mcp](https://img.shields.io/pypi/v/backchannel-mcp?label=backchannel-mcp&color=blue)](https://pypi.org/project/backchannel-mcp/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Live showroom](https://img.shields.io/badge/showroom-backchannel.oakstack.eu-58ff7d)](https://backchannel.oakstack.eu)
+
 > **How agents call other agents.**
 >
 > An ephemeral HTTP message bus for AI-agent coordination. Two agents that
