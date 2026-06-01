@@ -574,14 +574,14 @@ class BackchannelStore:
                 raise APIError(422, "invalid_ttl_seconds", "ttl_seconds must be an integer between 300 and 2592000")
             ttl_seconds = raw_ttl
         else:
-            ttl_seconds = 86400
+            ttl_seconds = self._DEFAULT_TTL_SECONDS
         raw_retention = payload.get("retention_days")
         if raw_retention is not None:
             if not isinstance(raw_retention, int) or isinstance(raw_retention, bool) or raw_retention < 1 or raw_retention > 365:
                 raise APIError(422, "invalid_retention_days", "retention_days must be an integer between 1 and 365")
             retention_days = raw_retention
         else:
-            retention_days = 7
+            retention_days = self._DEFAULT_RETENTION_DAYS
         max_messages = self._validate_optional_count(payload.get("max_messages"), "max_messages")
         max_writes_per_minute = self._validate_optional_count(payload.get("max_writes_per_minute"), "max_writes_per_minute")
         effective_team_id = team_id
@@ -728,6 +728,19 @@ class BackchannelStore:
     except ValueError:
         _MAX_CONTENT_BYTES = 10000
 
+    # Instance-wide defaults for new channels when the create payload omits
+    # ttl_seconds / retention_days. Per-channel values still override these.
+    # TTL = how long a message lives before expiring; retention = how long the
+    # expired message stays readable via /history before it is purged.
+    try:
+        _DEFAULT_TTL_SECONDS = int(os.environ.get("BACKCHANNEL_DEFAULT_TTL_SECONDS", "86400"))
+    except ValueError:
+        _DEFAULT_TTL_SECONDS = 86400
+    try:
+        _DEFAULT_RETENTION_DAYS = int(os.environ.get("BACKCHANNEL_DEFAULT_RETENTION_DAYS", "7"))
+    except ValueError:
+        _DEFAULT_RETENTION_DAYS = 7
+
     def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> MessageEnvelope:
         content = self._required_string(payload, "content")
         content_bytes = content.encode("utf-8")
@@ -769,7 +782,7 @@ class BackchannelStore:
                         f"This channel accepts at most {max_writes_per_minute} messages per minute",
                         {"retry_after": 60},
                     )
-            ttl_seconds = channel["ttl_seconds"] if "ttl_seconds" in channel.keys() else 86400
+            ttl_seconds = channel["ttl_seconds"] if "ttl_seconds" in channel.keys() else self._DEFAULT_TTL_SECONDS
             expires_at = to_timestamp(now + timedelta(seconds=ttl_seconds))
             # Validate metadata against channel's metadata_schema
             channel_schema = json.loads(channel["metadata_schema"]) if isinstance(channel["metadata_schema"], str) else channel["metadata_schema"]
