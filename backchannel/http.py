@@ -543,6 +543,9 @@ GET /v1/channels/<id>/events     owner only; ?since=<cursor>&limit=<1-100>
 POST   /v1/channels/<id>/messages   {{"content":"<str>","actor":"<id_or_alias>","actor_label":"<str>","metadata":{{}}}}
 GET    /v1/channels/<id>/messages   ?since=<iso_or_0>&limit=<1-100>&status=unclaimed|claimed&expiring_before=<iso>
 POST   /v1/messages/<id>/claim      {{"actor":"<name|id|alias>"}}  (actor optional — defaults to your key's actor; unknown names auto-create)
+       Response message has claimed_by (self-asserted label) AND claimed_by_key_id
+       (server-verified key that holds the claim). You can only act as an actor your
+       own key registered, else 403 actor_forbidden.
 POST   /v1/messages/<id>/release    {{"actor":"<name|id|alias>"}}  (un-claim; crash recovery)
 POST   /v1/messages/<id>/ack        {{"actor":"<name|id|alias>"}}  (actor optional)
 DELETE /v1/messages/<id>            retract before claim (409 if already claimed)
