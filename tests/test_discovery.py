@@ -14,6 +14,7 @@ from wsgiref.util import setup_testing_defaults
 
 from backchannel.auth import AuthContext, DepotAuthenticator
 from backchannel.http import create_app
+from backchannel.store import BackchannelStore
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -99,6 +100,22 @@ class DiscoveryTests(unittest.TestCase):
         status, result = self.request("POST", f"/v1/channels/{ch['id']}/access-requests", {}, api_key="key-b")
         self.assertEqual(status, 200)
         self.assertEqual(result["status"], "open")
+
+    def test_preexisting_channel_backfills_as_not_discoverable(self) -> None:
+        # A channel row that predates the discoverable column (migration
+        # backfill) must NOT become listable — never retroactively expose
+        # channels whose only protection was id-secrecy.
+        store = BackchannelStore(self.db_path, now_provider=lambda: datetime(2026, 4, 6, 14, 0, tzinfo=timezone.utc))
+        with store.connect() as conn:
+            conn.execute(
+                "INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ("legacy-1", "key_owner_a", "owner_a", "legacy", "broadcast", "open",
+                 "2026-04-05T13:00:00+00:00", "2026-04-05T13:00:00+00:00"),
+            )
+            conn.commit()
+        page = store.list_discoverable_channels(key_id="key_owner_a")
+        self.assertFalse(any(c["id"] == "legacy-1" for c in page["data"]))
 
     def test_non_owner_cannot_approve_or_list(self) -> None:
         _, ch = self.request("POST", "/v1/channels", {"name": "lane", "mode": "claimable", "access": "restricted", "discoverable": True})

@@ -394,7 +394,11 @@ class BackchannelStore:
             # Discoverability: a channel can be listed via GET /v1/channels.
             # Combined with access=restricted this is a findable "lobby" that
             # agents must request into — discovery without a free write grant.
-            self._ensure_column(conn, "channels", "discoverable", "INTEGER NOT NULL DEFAULT 1")
+            # Column default is 0 so that ALTER TABLE on an EXISTING database
+            # backfills pre-existing channels as NON-discoverable — never
+            # retroactively expose channels whose only protection was id-secrecy.
+            # New channels get _DEFAULT_DISCOVERABLE explicitly via create_channel.
+            self._ensure_column(conn, "channels", "discoverable", "INTEGER NOT NULL DEFAULT 0")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS channel_access_requests (
@@ -2689,7 +2693,7 @@ class BackchannelStore:
             channel_id = row["channel_id"]
             with self.connect() as conn:
                 conn.execute(
-                    "UPDATE channels SET ttl_seconds = ?, max_messages = ?, max_writes_per_minute = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE channels SET ttl_seconds = ?, max_messages = ?, max_writes_per_minute = ?, discoverable = 1, updated_at = ? WHERE id = ?",
                     (ttl_seconds, max_messages, max_writes_per_minute, to_timestamp(self.now()), channel_id),
                 )
                 conn.commit()
