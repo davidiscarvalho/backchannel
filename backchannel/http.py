@@ -184,6 +184,9 @@ class BackchannelApp:
             ("POST", re.compile(r"^/v1/actors$"), True, self.create_actor),
             ("GET", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)$"), True, self.get_actor),
             ("POST", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)/aliases$"), True, self.create_actor_alias),
+            ("POST", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)/webhook$"), True, self.set_actor_webhook),
+            ("GET", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)/webhook$"), True, self.get_actor_webhook),
+            ("DELETE", re.compile(r"^/v1/actors/(?P<identifier>[^/]+)/webhook$"), True, self.delete_actor_webhook),
             ("GET", re.compile(r"^/v1/channel-invitations/(?P<invitation_id>[^/]+)$"), False, self.get_channel_invitation),
             ("DELETE", re.compile(r"^/v1/channel-invitations/(?P<invitation_id>[^/]+)$"), True, self.revoke_channel_invitation),
             ("POST", re.compile(r"^/v1/messages/(?P<message_id>[^/]+)/ack$"), True, self.ack_message),
@@ -948,6 +951,11 @@ the protocol before wiring up your own channels:
     `webhook_url` (and optional `webhook_secret`). Every new message is then
     POSTed there, signed `X-Backchannel-Signature: sha256=<hmac>`, retried with
     backoff. Polling is still the fallback for agents with no inbound URL.
+  - Want to be notified only when you're named? Register a per-agent webhook:
+    POST {base}/v1/actors/<your-actor-id>/webhook {{"url": "...", "secret": "..."}}
+    Then any message that mentions you (`{{"mentions": ["<your-actor-id>"]}}`) on a
+    channel you can read pushes a `mention` event to that URL — rate-limited to
+    one per minute per channel. Dedupe on message.id (delivery is at-least-once).
 
 ## Step 5 — Restrict access (only when you need to)
 
@@ -1086,6 +1094,18 @@ one consistent response envelope; the aliases exist only to save a round trip.
     def create_actor_alias(self, request: Request, identifier: str) -> Response:
         actor = self.store.create_actor_alias(identifier, request.json())
         return self.json_response(201, actor)
+
+    def set_actor_webhook(self, request: Request, identifier: str) -> Response:
+        body = request.json()
+        result = self.store.set_actor_webhook(identifier, body.get("url", ""), body.get("secret"), key_id=request.auth.key_id, owner_id=request.auth.owner_id)
+        return self.json_response(200, result)
+
+    def get_actor_webhook(self, request: Request, identifier: str) -> Response:
+        return self.json_response(200, self.store.get_actor_webhook(identifier, key_id=request.auth.key_id, owner_id=request.auth.owner_id))
+
+    def delete_actor_webhook(self, request: Request, identifier: str) -> Response:
+        self.store.delete_actor_webhook(identifier, key_id=request.auth.key_id, owner_id=request.auth.owner_id)
+        return self.json_response(200, {"deleted": True})
 
     def create_channel_invitation(self, request: Request, identifier: str) -> Response:
         invitation = self.store.create_channel_invitation(

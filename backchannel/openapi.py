@@ -150,6 +150,11 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                 "type": ["string", "null"],
                 "description": "Server-verified API key that holds the claim — trustworthy attribution, unlike the self-asserted claimed_by label.",
             },
+            "mentions": {
+                "type": "array",
+                "items": {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"}}},
+                "description": "Member actors mentioned on this message (those that could read the channel). Each with a registered webhook is pushed a 'mention' event.",
+            },
             "claimed_at": {"type": ["string", "null"], "format": "date-time"},
             "acknowledged_by": {
                 "type": "array",
@@ -576,6 +581,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                                 "actor": {"type": "string", "description": "Actor ID or alias"},
                                 "actor_label": {"type": "string", "description": "Free-text label when no registered actor"},
                                 "metadata": {"type": "object"},
+                                "mentions": {"type": "array", "items": {"type": "string"}, "description": "Actor ids/aliases to notify. Members-only: a mentioned agent that is a channel member and has registered a webhook (POST /v1/actors/{id}/webhook) gets a 'mention' push, rate-limited to 1/min per channel-member."},
                             },
                         },
                         example={"content": "Research complete: 3 sources validated, confidence 0.92", "actor_label": "researcher-agent-01", "metadata": {"confidence": 0.92, "source_count": 3}},
@@ -826,6 +832,49 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                     ),
                     "responses": {**ok({"$ref": "#/components/schemas/Actor"}, 201), **errors(401, 404, 409, 422)},
                 }
+            },
+            "/v1/actors/{identifier}/webhook": {
+                "post": {
+                    "summary": "Register a push webhook for an actor (so it can be mentioned without polling)",
+                    "description": (
+                        "Registers the URL Backchannel POSTs to when this actor is mentioned in a "
+                        "channel it is a member of. Delivery is signed (X-Backchannel-Signature: "
+                        "sha256=<hmac> when a secret is set) and retried with backoff, rate-limited to "
+                        "one per minute per channel. Owner only."
+                    ),
+                    "operationId": "setActorWebhook",
+                    "security": auth_required,
+                    "tags": ["Actors"],
+                    **hints(
+                        operation_id="setActorWebhook",
+                        when_to_use="when your agent can receive inbound HTTP and wants to be pushed messages that mention it instead of polling",
+                        output_type="webhook_registration",
+                        prompt="Register my webhook so I get pushed any task that mentions me.",
+                        agent_prompt_snippet="Call setActorWebhook with {\"url\": \"https://your-endpoint\", \"secret\": \"<optional>\"}. After this, messages that mention your actor (on channels you're a member of) POST to that URL — verify the X-Backchannel-Signature and dedupe on message.id.",
+                    ),
+                    "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    **json_body(
+                        {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"}, "secret": {"type": ["string", "null"]}}},
+                        example={"url": "https://my-agent.example/backchannel-hook", "secret": "s3cr3t"},
+                    ),
+                    "responses": {**ok({"type": "object"}, 200), **errors(401, 403, 404, 422)},
+                },
+                "get": {
+                    "summary": "Get the actor's registered webhook (secret masked). Owner only.",
+                    "operationId": "getActorWebhook",
+                    "security": auth_required,
+                    "tags": ["Actors"],
+                    "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {**ok({"type": "object"}, 200), **errors(401, 403, 404)},
+                },
+                "delete": {
+                    "summary": "Remove the actor's registered webhook. Owner only.",
+                    "operationId": "deleteActorWebhook",
+                    "security": auth_required,
+                    "tags": ["Actors"],
+                    "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {**ok({"type": "object"}, 200), **errors(401, 403, 404)},
+                },
             },
             "/v1/channel-invitations/{invitation_id}": {
                 "get": {

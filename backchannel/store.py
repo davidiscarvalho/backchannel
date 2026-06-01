@@ -420,6 +420,30 @@ class BackchannelStore:
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_access_requests_pending "
                 "ON channel_access_requests(channel_id, requester_key_id) WHERE status = 'pending'"
             )
+            # Mentions → per-agent webhook push. An actor registers one webhook;
+            # a message that mentions it (and that it can read) pushes to that URL.
+            self._ensure_column(conn, "messages", "mentions", "TEXT")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_webhooks (
+                    actor_id TEXT PRIMARY KEY,
+                    url TEXT NOT NULL,
+                    secret TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mention_rate (
+                    channel_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    last_sent_at TEXT NOT NULL,
+                    PRIMARY KEY (channel_id, actor_id)
+                )
+                """
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS key_scopes (
@@ -962,10 +986,36 @@ class BackchannelStore:
             if actor_identifier is not None:
                 actor = self._resolve_actor(conn, self._optional_string(actor_identifier), owner_id=owner_id)
 
+            # Mentions: resolve globally by id/alias (you mention another agent),
+            # then keep only those that can read this channel (members-only). The
+            # recorded mentions are the eligible ones; webhook push is rate-limited
+            # separately. Unresolved / non-member mentions are dropped.
+            mention_input = payload.get("mentions")
+            mention_rows: list[sqlite3.Row] = []
+            if mention_input is not None:
+                if not isinstance(mention_input, list):
+                    raise APIError(422, "invalid_mentions", "mentions must be an array of actor ids or aliases")
+                seen: set[str] = set()
+                for ident in mention_input:
+                    s = self._optional_string(ident, allow_none=True)
+                    if not s:
+                        continue
+                    a = self._resolve_mention(conn, s)
+                    if a is None or a["id"] in seen:
+                        continue
+                    # "Members-only" = the mentioned agent must be able to read
+                    # the channel: any key on an open channel, explicit members
+                    # on a restricted one. Prevents notifying/leaking to outsiders.
+                    can_read = channel["access"] == "open" or self._is_channel_member(conn, channel, a["owner_key_id"])
+                    if can_read:
+                        seen.add(a["id"])
+                        mention_rows.append(a)
+            mention_ids = [a["id"] for a in mention_rows]
+
             conn.execute(
                 """
-                INSERT INTO messages (id, channel_id, actor_id, actor_label, content, metadata, created_at, expires_at, claimed_by_actor_id, claimed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                INSERT INTO messages (id, channel_id, actor_id, actor_label, content, metadata, mentions, created_at, expires_at, claimed_by_actor_id, claimed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     message_id,
@@ -974,6 +1024,7 @@ class BackchannelStore:
                     actor_label,
                     content,
                     json.dumps(metadata, sort_keys=True),
+                    json.dumps(mention_ids) if mention_ids else None,
                     created_at,
                     expires_at,
                 ),
@@ -1011,7 +1062,94 @@ class BackchannelStore:
                 webhook_url,
                 webhook_secret,
             )
+        if mention_rows:
+            self._dispatch_mention_webhooks(channel["id"], mention_rows, envelope.message)
         return envelope
+
+    def _resolve_mention(self, conn: sqlite3.Connection, identifier: str) -> sqlite3.Row | None:
+        """Resolve a mention target by actor id or alias — globally, since you
+        mention another agent. Names are not accepted (ambiguous across owners)."""
+        a = conn.execute("SELECT * FROM actors WHERE id = ?", (identifier,)).fetchone()
+        if a is not None:
+            return a
+        return conn.execute(
+            "SELECT a.* FROM actor_aliases aa JOIN actors a ON a.id = aa.actor_id WHERE aa.alias = ?",
+            (identifier,),
+        ).fetchone()
+
+    def _dispatch_mention_webhooks(self, channel_id: str, actor_rows: list[sqlite3.Row], message: dict[str, Any]) -> None:
+        """Push a 'mention' webhook to each mentioned actor that has registered
+        one, rate-limited to one delivery per minute per (channel, actor)."""
+        now = self.now()
+        now_ts = to_timestamp(now)
+        cutoff = to_timestamp(now - timedelta(seconds=60))
+        with self.connect() as conn:
+            for a in actor_rows:
+                wh = conn.execute("SELECT url, secret FROM agent_webhooks WHERE actor_id = ?", (a["id"],)).fetchone()
+                if wh is None:
+                    continue
+                rate = conn.execute(
+                    "SELECT last_sent_at FROM mention_rate WHERE channel_id = ? AND actor_id = ?",
+                    (channel_id, a["id"]),
+                ).fetchone()
+                if rate is not None and rate["last_sent_at"] > cutoff:
+                    continue  # within the 1/min window — coalesce
+                conn.execute(
+                    "INSERT INTO mention_rate (channel_id, actor_id, last_sent_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(channel_id, actor_id) DO UPDATE SET last_sent_at = excluded.last_sent_at",
+                    (channel_id, a["id"], now_ts),
+                )
+                conn.commit()
+                self.queue_webhook(
+                    channel_id,
+                    "mention",
+                    {"message": message, "mentioned_actor_id": a["id"]},
+                    wh["url"],
+                    wh["secret"],
+                )
+
+    def set_actor_webhook(self, actor_id: str, url: str, secret: str | None, key_id: str, owner_id: str | None = None) -> dict[str, Any]:
+        if not url or not url.lower().startswith(("http://", "https://")):
+            raise APIError(422, "invalid_webhook_url", "url must be an http(s) URL")
+        with self.connect() as conn:
+            actor = conn.execute("SELECT * FROM actors WHERE id = ?", (actor_id,)).fetchone()
+            if actor is None:
+                raise APIError(404, "actor_not_found", f"Unknown actor '{actor_id}'")
+            if owner_id is None:
+                owner_id, _ = self._owner_for_key(conn, key_id)
+            self._assert_actor_owned(actor, owner_id)
+            now = to_timestamp(self.now())
+            conn.execute(
+                "INSERT INTO agent_webhooks (actor_id, url, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(actor_id) DO UPDATE SET url = excluded.url, secret = excluded.secret, updated_at = excluded.updated_at",
+                (actor_id, url, secret, now, now),
+            )
+            conn.commit()
+            return {"actor_id": actor_id, "url": url, "has_secret": bool(secret)}
+
+    def get_actor_webhook(self, actor_id: str, key_id: str, owner_id: str | None = None) -> dict[str, Any]:
+        with self.connect() as conn:
+            actor = conn.execute("SELECT * FROM actors WHERE id = ?", (actor_id,)).fetchone()
+            if actor is None:
+                raise APIError(404, "actor_not_found", f"Unknown actor '{actor_id}'")
+            if owner_id is None:
+                owner_id, _ = self._owner_for_key(conn, key_id)
+            self._assert_actor_owned(actor, owner_id)
+            wh = conn.execute("SELECT url, secret, updated_at FROM agent_webhooks WHERE actor_id = ?", (actor_id,)).fetchone()
+            if wh is None:
+                raise APIError(404, "webhook_not_found", "No webhook registered for this actor")
+            return {"actor_id": actor_id, "url": wh["url"], "has_secret": bool(wh["secret"]), "updated_at": wh["updated_at"]}
+
+    def delete_actor_webhook(self, actor_id: str, key_id: str, owner_id: str | None = None) -> None:
+        with self.connect() as conn:
+            actor = conn.execute("SELECT * FROM actors WHERE id = ?", (actor_id,)).fetchone()
+            if actor is None:
+                raise APIError(404, "actor_not_found", f"Unknown actor '{actor_id}'")
+            if owner_id is None:
+                owner_id, _ = self._owner_for_key(conn, key_id)
+            self._assert_actor_owned(actor, owner_id)
+            conn.execute("DELETE FROM agent_webhooks WHERE actor_id = ?", (actor_id,))
+            conn.commit()
 
     def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
@@ -2161,6 +2299,14 @@ class BackchannelStore:
             claimed_actor = self._get_actor_by_id(conn, row["claimed_by_actor_id"])
             claimed_by = {"id": claimed_actor["id"], "name": claimed_actor["name"]}
 
+        mentions = []
+        mentions_raw = row["mentions"] if "mentions" in row.keys() else None
+        if mentions_raw:
+            for aid in json.loads(mentions_raw):
+                ar = self._get_actor_by_id(conn, aid)
+                if ar is not None:
+                    mentions.append({"id": ar["id"], "name": ar["name"]})
+
         acks = [
             {
                 "id": ack_row["id"],
@@ -2189,6 +2335,7 @@ class BackchannelStore:
             "expires_at": row["expires_at"],
             "claimed_by": claimed_by,
             "claimed_by_key_id": row["claimed_by_key_id"] if "claimed_by_key_id" in row.keys() else None,
+            "mentions": mentions,
             "claimed_at": row["claimed_at"],
             "acknowledged_by": acks,
             "active": parse_timestamp(row["expires_at"]) > self.now(),
