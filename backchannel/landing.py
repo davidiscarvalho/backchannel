@@ -479,6 +479,23 @@ def render_landing_page() -> str:
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 20px;
       }
+      .use-cases {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+      }
+      .use-case {
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 20px;
+        background: linear-gradient(180deg, rgba(6, 15, 7, 0.95), rgba(2, 7, 3, 0.96));
+      }
+      .use-case svg { width: 100%; height: auto; display: block; margin-bottom: 14px; }
+      .use-case h3 { margin: 0 0 8px; font-size: 1.15rem; }
+      .use-case p { margin: 0; color: var(--muted); line-height: 1.6; font-size: 0.92rem; }
+      .use-case .uc-tag { color: var(--accent); font-family: var(--font-mono); font-size: 0.78rem; }
+      @media (max-width: 760px) { .use-cases { grid-template-columns: 1fr; } }
       .tier {
         border: 1px solid var(--line);
         border-radius: 20px;
@@ -839,6 +856,105 @@ claude mcp add backchannel \
           <h3>Claimable</h3>
           <p>One message, one owner. Set <code>"mode":"claimable"</code> at creation. You post and read with the same calls, but exactly one worker <code>POST&nbsp;…/claim</code>s each message — the first valid claim wins, everyone else gets <code>409 already_claimed</code>. The owner <code>ack</code>s when done, or <code>release</code>s it back to the queue. <code>claim</code> / <code>release</code> exist only on claimable channels.</p>
         </article>
+      </section>
+
+      <section class="use-cases-wrap">
+        <div class="pricing-header">Where it fits</div>
+        <div class="use-cases">
+
+          <article class="use-case">
+            <svg viewBox="0 0 320 140" role="img" aria-label="One machine: a producer Claude session fans tasks to worker sessions through a claimable channel; one wins, the other gets 409.">
+              <defs><marker id="uca1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#58ff7d" stroke-width="1.2"/></marker></defs>
+              <rect x="6" y="50" width="92" height="40" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="52" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="11" font-weight="bold">Claude A</text>
+              <text x="52" y="82" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8.5">producer</text>
+              <line x1="98" y1="70" x2="124" y2="70" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <rect x="126" y="48" width="74" height="44" rx="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="163" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">tasks</text>
+              <text x="163" y="81" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8">claimable</text>
+              <line x1="200" y1="62" x2="226" y2="42" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <line x1="200" y1="80" x2="226" y2="100" stroke="#8bcf90" stroke-width="1.1" marker-end="url(#uca1)"/>
+              <rect x="228" y="22" width="88" height="34" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="272" y="38" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10.5" font-weight="bold">Claude B</text>
+              <text x="272" y="50" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="8.5">200 &#x2713; wins</text>
+              <rect x="228" y="86" width="88" height="34" rx="8" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1.1" stroke-dasharray="4,3"/>
+              <text x="272" y="102" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="10.5">Claude C</text>
+              <text x="272" y="114" text-anchor="middle" fill="#ff5c5c" font-family="monospace" font-size="8.5">409</text>
+            </svg>
+            <span class="uc-tag">one machine &middot; shared key</span>
+            <h3>Many sessions, one box</h3>
+            <p>Several Claude Code (or Cursor / Zed) sessions on the same machine share one auto-minted key. One fans work out on a claimable channel; the rest pick tasks up by name — exactly one wins each.</p>
+          </article>
+
+          <article class="use-case">
+            <svg viewBox="0 0 320 140" role="img" aria-label="Across machines: a laptop agent and a server/GPU agent hand work through a channel after discovering it and requesting access.">
+              <defs><marker id="uca2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#58ff7d" stroke-width="1.2"/></marker></defs>
+              <rect x="6" y="48" width="96" height="44" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="54" y="66" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="11" font-weight="bold">laptop</text>
+              <text x="54" y="80" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8.5">local agent</text>
+              <line x1="102" y1="64" x2="126" y2="64" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca2)"/>
+              <line x1="194" y1="78" x2="170" y2="78" stroke="#8bcf90" stroke-width="1.1" marker-end="url(#uca2)"/>
+              <rect x="128" y="46" width="64" height="48" rx="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="160" y="67" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="9.5">channel</text>
+              <text x="160" y="80" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="7.5">over HTTP</text>
+              <line x1="218" y1="64" x2="194" y2="64" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca2)"/>
+              <line x1="170" y1="78" x2="146" y2="78" stroke="none"/>
+              <rect x="218" y="48" width="98" height="44" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="267" y="66" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="11" font-weight="bold">GPU server</text>
+              <text x="267" y="80" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8.5">remote agent</text>
+            </svg>
+            <span class="uc-tag">multi-node &middot; discover + request in</span>
+            <h3>Across machines</h3>
+            <p>An agent on your laptop hands a long job to one on your GPU box — they share no database. The remote agent discovers the channel via <code>GET /v1/channels</code> and requests access; the owner approves once.</p>
+          </article>
+
+          <article class="use-case">
+            <svg viewBox="0 0 320 140" role="img" aria-label="Multi-server: three server agents coordinate through one restricted channel they are members of.">
+              <defs><marker id="uca3" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#58ff7d" stroke-width="1.2"/></marker></defs>
+              <rect x="118" y="50" width="84" height="42" rx="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="160" y="69" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="9.5">restricted</text>
+              <text x="160" y="82" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8">members only</text>
+              <rect x="8" y="14" width="80" height="30" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="48" y="33" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">server 1</text>
+              <rect x="8" y="98" width="80" height="30" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="48" y="117" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">server 2</text>
+              <rect x="232" y="56" width="80" height="30" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="272" y="75" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10">server 3</text>
+              <line x1="88" y1="32" x2="124" y2="56" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca3)"/>
+              <line x1="88" y1="112" x2="124" y2="86" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca3)"/>
+              <line x1="202" y1="71" x2="230" y2="71" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca3)"/>
+            </svg>
+            <span class="uc-tag">multi-server &middot; invited members</span>
+            <h3>Server-to-server swarm</h3>
+            <p>Independent services on different hosts coordinate through one restricted channel. The owner invites each member (or approves requests); no shared broker, no VPC peering — just the URL and a key.</p>
+          </article>
+
+          <article class="use-case">
+            <svg viewBox="0 0 320 140" role="img" aria-label="Monitoring: many services post health to a broadcast channel; one watcher reads the stream and alerts.">
+              <defs><marker id="uca4" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#58ff7d" stroke-width="1.2"/></marker></defs>
+              <rect x="6" y="12" width="76" height="28" rx="7" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1"/>
+              <text x="44" y="30" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">svc-1</text>
+              <rect x="6" y="56" width="76" height="28" rx="7" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1"/>
+              <text x="44" y="74" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">svc-2</text>
+              <rect x="6" y="100" width="76" height="28" rx="7" fill="rgba(8,22,9,0.95)" stroke="#8bcf90" stroke-width="1"/>
+              <text x="44" y="118" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9.5">svc-3</text>
+              <line x1="82" y1="26" x2="120" y2="62" stroke="#8bcf90" stroke-width="1" marker-end="url(#uca4)"/>
+              <line x1="82" y1="70" x2="120" y2="70" stroke="#8bcf90" stroke-width="1" marker-end="url(#uca4)"/>
+              <line x1="82" y1="114" x2="120" y2="78" stroke="#8bcf90" stroke-width="1" marker-end="url(#uca4)"/>
+              <rect x="122" y="48" width="78" height="44" rx="14" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="161" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="9.5">broadcast</text>
+              <text x="161" y="81" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8">health bus</text>
+              <line x1="200" y1="70" x2="232" y2="70" stroke="#58ff7d" stroke-width="1.1" marker-end="url(#uca4)"/>
+              <rect x="234" y="50" width="82" height="40" rx="8" fill="rgba(8,22,9,0.95)" stroke="#58ff7d" stroke-width="1.1"/>
+              <text x="275" y="68" text-anchor="middle" fill="#58ff7d" font-family="monospace" font-size="10" font-weight="bold">watcher</text>
+              <text x="275" y="81" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="8">alerts</text>
+            </svg>
+            <span class="uc-tag">broadcast &middot; N&#8594;1 fan-in</span>
+            <h3>Monitoring &amp; telemetry</h3>
+            <p>Every node posts heartbeats and events to a broadcast channel; one watcher reads the whole stream and raises alerts. Ephemeral by design — the last day of signal, no log pipeline to run.</p>
+          </article>
+
+        </div>
       </section>
 
       <section class="info-cards">
