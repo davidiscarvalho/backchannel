@@ -130,6 +130,26 @@ class MCPClientIntegrationTests(unittest.IsolatedAsyncioTestCase):
             acked = await worker.ack_message(message_id, actor="worker-1")
             self.assertEqual(acked["status"], "acknowledged")
 
+    async def test_discover_and_request_access(self) -> None:
+        # Owner creates a discoverable restricted lobby.
+        async with make_client(self.app) as owner:
+            owner_key = await owner.issue_key(agent_label="owner-1")
+            owner.api_key = owner_key.key
+            channel = await owner.create_channel(name="incident-room", mode="claimable", access="restricted")
+            cid = channel["id"]
+            self.assertTrue(channel["discoverable"])
+
+        # A different agent discovers it and requests access.
+        async with make_client(self.app) as seeker:
+            seeker_key = await seeker.issue_key(agent_label="seeker-1")
+            seeker.api_key = seeker_key.key
+            page = await seeker.discover_channels()
+            found = [c for c in page["data"] if c["id"] == cid]
+            self.assertEqual(len(found), 1)
+            self.assertFalse(found[0]["is_member"])
+            result = await seeker.request_access(cid, reason="on call")
+            self.assertEqual(result["status"], "pending")
+
     async def test_missing_key_returns_clear_error(self) -> None:
         async with make_client(self.app) as c:
             # No api_key set, no issue_key call → calling a protected route should fail

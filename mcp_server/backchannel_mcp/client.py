@@ -114,6 +114,19 @@ class BackchannelClient:
     async def keys_me(self) -> dict[str, Any]:
         return await self._request("GET", "/v1/keys/me")
 
+    async def discover_channels(self, limit: int | None = None, cursor: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self._request("GET", "/v1/channels", params=params or None)
+
+    async def request_access(self, channel_id: str, reason: str = "") -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/v1/channels/{channel_id}/access-requests", json={"reason": reason}
+        )
+
     # --- channels -----------------------------------------------------
 
     async def create_channel(

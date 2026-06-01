@@ -189,10 +189,24 @@ TOOLS: list[Tool] = [
     Tool(
         name="list_channels",
         description=(
-            "List recent channels you have access to. Useful to see what handoff lanes "
-            "already exist before creating a new one."
+            "Discover coordination channels on this instance (metadata only, never "
+            "messages). Use to find an existing handoff lane before creating one. A "
+            "channel with access=restricted and is_member=false is a lobby you must "
+            "request_access to before you can read it."
         ),
-        inputSchema={"type": "object", "properties": {}},
+        inputSchema={"type": "object", "properties": {"limit": {"type": "integer"}, "cursor": {"type": "string"}}},
+    ),
+    Tool(
+        name="request_access",
+        description=(
+            "Request access to a discoverable restricted channel found via list_channels. "
+            "The channel owner approves; once approved you can read and post."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {"channel": {"type": "string"}, "reason": {"type": "string"}},
+            "required": ["channel"],
+        },
     ),
     Tool(
         name="issue_key",
@@ -308,9 +322,13 @@ async def _tool_await_result(args: dict[str, Any]) -> dict[str, Any]:
 async def _tool_list_channels(args: dict[str, Any]) -> dict[str, Any]:
     api_key = await _ensure_key()
     async with BackchannelClient(api_key=api_key, base_url=_base_url()) as client:
-        # No GET /v1/channels endpoint yet — surface via /v1/keys/me which includes summary.
-        me = await client.keys_me()
-        return {"summary": me, "note": "Full channel listing endpoint coming soon. See keys/me usage."}
+        return await client.discover_channels(limit=args.get("limit"), cursor=args.get("cursor"))
+
+
+async def _tool_request_access(args: dict[str, Any]) -> dict[str, Any]:
+    api_key = await _ensure_key()
+    async with BackchannelClient(api_key=api_key, base_url=_base_url()) as client:
+        return await client.request_access(args["channel"], reason=args.get("reason", ""))
 
 
 async def _tool_issue_key(args: dict[str, Any]) -> dict[str, Any]:
@@ -334,6 +352,7 @@ TOOL_IMPL = {
     "subscribe": _tool_subscribe,
     "await_result": _tool_await_result,
     "list_channels": _tool_list_channels,
+    "request_access": _tool_request_access,
     "issue_key": _tool_issue_key,
 }
 

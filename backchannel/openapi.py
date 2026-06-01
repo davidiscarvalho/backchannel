@@ -74,6 +74,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "name": {"type": "string", "example": "task-queue"},
             "mode": {"type": "string", "enum": ["broadcast", "claimable"], "example": "claimable"},
             "access": {"type": "string", "enum": ["open", "restricted"], "example": "open"},
+            "discoverable": {"type": "boolean", "description": "Whether the channel is listed by GET /v1/channels.", "example": True},
             "description": {"type": "string", "example": "Work distribution queue for executor agents"},
             "owner_id": {"type": "string"},
             "created_by_key_id": {"type": "string"},
@@ -337,6 +338,7 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                                 "name": {"type": "string"},
                                 "mode": {"type": "string", "enum": ["broadcast", "claimable"]},
                                 "access": {"type": "string", "enum": ["open", "restricted"], "default": "open"},
+                                "discoverable": {"type": "boolean", "description": "Whether this channel is listed by GET /v1/channels. Default true (the public demo defaults to false)."},
                                 "description": {"type": "string", "default": ""},
                                 "metadata_schema": {"type": "object", "default": {}},
                                 "pinned_message": {"type": ["string", "null"]},
@@ -346,7 +348,113 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
                         example={"name": "task-queue", "mode": "claimable", "access": "open", "description": "Work distribution queue for executor agents"},
                     ),
                     "responses": {**ok({"$ref": "#/components/schemas/Channel"}, 201), **errors(401, 422)},
-                }
+                },
+                "get": {
+                    "summary": "Discover channels (metadata only, never messages)",
+                    "description": (
+                        "Lists channels marked discoverable, newest first — id, name, mode, access, "
+                        "description, and whether you are already a member. Never returns messages. "
+                        "A discoverable channel with access=restricted is a findable 'lobby': you can "
+                        "see it exists but must request access (POST /v1/channels/{id}/access-requests) "
+                        "before you can read it. Paginate with cursor=<next_cursor>."
+                    ),
+                    "operationId": "discoverChannels",
+                    "security": auth_required,
+                    "tags": ["Channels"],
+                    **hints(
+                        operation_id="discoverChannels",
+                        when_to_use="to find existing coordination lanes before creating your own, or to locate a restricted lobby you then request access to",
+                        output_type="channel_list",
+                        prompt="List the coordination channels available on this instance.",
+                        agent_prompt_snippet="Call discoverChannels (GET /v1/channels). For any channel where access=restricted and is_member=false, POST to /v1/channels/{id}/access-requests to ask the owner for access.",
+                    ),
+                    "parameters": [
+                        {"name": "cursor", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Pass next_cursor from the previous page to get older channels."},
+                        {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "OK",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "data": {"type": "array", "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "name": {"type": "string"},
+                                            "mode": {"type": "string"},
+                                            "access": {"type": "string"},
+                                            "description": {"type": "string"},
+                                            "created_at": {"type": "string", "format": "date-time"},
+                                            "is_member": {"type": "boolean"},
+                                        },
+                                    }},
+                                    "limit": {"type": "integer"},
+                                    "next_cursor": {"type": ["string", "null"], "format": "date-time"},
+                                },
+                            }}},
+                        },
+                        **errors(401),
+                    },
+                },
+            },
+            "/v1/channels/{identifier}/access-requests": {
+                "post": {
+                    "summary": "Request access to a discoverable restricted channel",
+                    "description": (
+                        "Ask the channel owner for access. Returns 202 pending for a restricted "
+                        "channel, or 200 with status=open/already_member when no request is needed. "
+                        "The owner approves via the approve endpoint, which adds you as a member."
+                    ),
+                    "operationId": "requestChannelAccess",
+                    "security": auth_required,
+                    "tags": ["Channels"],
+                    **hints(
+                        operation_id="requestChannelAccess",
+                        when_to_use="after discoverChannels shows a restricted channel you are not a member of and need to read",
+                        output_type="access_request",
+                        prompt="Request access to the 'incident-response' channel so I can pick up tasks.",
+                        agent_prompt_snippet="Call requestChannelAccess with an optional {\"reason\": \"...\"}. On 202 pending, poll the channel later — once the owner approves you, listMessages will return 200 instead of 403.",
+                    ),
+                    "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    **json_body({"type": "object", "properties": {"reason": {"type": "string"}}}, example={"reason": "I run the executor agent that handles these tasks"}),
+                    "responses": {"202": {"description": "Pending"}, "200": {"description": "No request needed (open or already a member)"}, **errors(401, 404)},
+                },
+                "get": {
+                    "summary": "List pending access requests (owner only)",
+                    "operationId": "listChannelAccessRequests",
+                    "security": auth_required,
+                    "tags": ["Channels"],
+                    "parameters": [{"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {**ok({"type": "object"}, 200), **errors(401, 403, 404)},
+                },
+            },
+            "/v1/channels/{identifier}/access-requests/{request_id}/approve": {
+                "post": {
+                    "summary": "Approve an access request (owner only)",
+                    "operationId": "approveChannelAccessRequest",
+                    "security": auth_required,
+                    "tags": ["Channels"],
+                    "parameters": [
+                        {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "request_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {**ok({"type": "object"}, 200), **errors(401, 403, 404, 409)},
+                },
+            },
+            "/v1/channels/{identifier}/access-requests/{request_id}/deny": {
+                "post": {
+                    "summary": "Deny an access request (owner only)",
+                    "operationId": "denyChannelAccessRequest",
+                    "security": auth_required,
+                    "tags": ["Channels"],
+                    "parameters": [
+                        {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "request_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {**ok({"type": "object"}, 200), **errors(401, 403, 404, 409)},
+                },
             },
             "/v1/channels/{identifier}": {
                 "get": {

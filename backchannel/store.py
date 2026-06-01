@@ -391,6 +391,31 @@ class BackchannelStore:
             # Server-verified key behind a claim — trustworthy attribution
             # alongside the self-asserted claimed_by actor label.
             self._ensure_column(conn, "messages", "claimed_by_key_id", "TEXT")
+            # Discoverability: a channel can be listed via GET /v1/channels.
+            # Combined with access=restricted this is a findable "lobby" that
+            # agents must request into — discovery without a free write grant.
+            self._ensure_column(conn, "channels", "discoverable", "INTEGER NOT NULL DEFAULT 1")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS channel_access_requests (
+                    id TEXT PRIMARY KEY,
+                    channel_id TEXT NOT NULL,
+                    requester_key_id TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied')),
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    resolved_by_key_id TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_access_requests_channel ON channel_access_requests(channel_id, status)"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_access_requests_pending "
+                "ON channel_access_requests(channel_id, requester_key_id) WHERE status = 'pending'"
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS key_scopes (
@@ -564,6 +589,13 @@ class BackchannelStore:
         access = payload.get("access", "open")
         if access not in {"open", "restricted"}:
             raise APIError(422, "invalid_access", "Channel access must be 'open' or 'restricted'")
+        raw_discoverable = payload.get("discoverable")
+        if raw_discoverable is None:
+            discoverable = self._DEFAULT_DISCOVERABLE
+        elif isinstance(raw_discoverable, bool):
+            discoverable = raw_discoverable
+        else:
+            raise APIError(422, "invalid_discoverable", "discoverable must be true or false")
 
         description = self._optional_string(payload.get("description"), default="")
         metadata_schema = self._ensure_mapping(payload.get("metadata_schema", {}), "metadata_schema")
@@ -594,8 +626,8 @@ class BackchannelStore:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, retention_days, max_messages, max_writes_per_minute, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channels (id, owner_key_id, owner_id, name, mode, access, discoverable, team_id, description, metadata_schema, pinned_message, webhook_url, webhook_secret, ttl_seconds, retention_days, max_messages, max_writes_per_minute, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel_id,
@@ -604,6 +636,7 @@ class BackchannelStore:
                     name,
                     mode,
                     access,
+                    1 if discoverable else 0,
                     effective_team_id,
                     description,
                     json.dumps(metadata_schema, sort_keys=True),
@@ -629,8 +662,110 @@ class BackchannelStore:
             channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id)
             return self._serialize_channel(conn, channel)
 
+    def _is_channel_member(self, conn: sqlite3.Connection, channel: sqlite3.Row, key_id: str) -> bool:
+        if key_id == channel["owner_key_id"]:
+            return True
+        row = conn.execute(
+            "SELECT 1 FROM channel_members WHERE channel_id = ? AND key_id = ?",
+            (channel["id"], key_id),
+        ).fetchone()
+        return row is not None
+
+    def list_discoverable_channels(self, key_id: str, since: str | None = None, limit: int | None = None) -> dict[str, Any]:
+        """List channels marked discoverable, newest first — metadata only,
+        never messages. For restricted channels the caller sees that the lobby
+        exists (and whether it is already a member) but must request access to
+        read it."""
+        page_size = 50 if limit is None else max(1, min(int(limit), 100))
+        params: list[Any] = []
+        cursor_clause = ""
+        cursor_dt = parse_timestamp_or_none(since)
+        if cursor_dt is not None:
+            cursor_clause = " AND created_at < ?"
+            params.append(to_timestamp(cursor_dt))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM channels WHERE discoverable = 1{cursor_clause} "
+                "ORDER BY created_at DESC LIMIT ?",
+                (*params, page_size),
+            ).fetchall()
+            items = [
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "mode": row["mode"],
+                    "access": row["access"],
+                    "description": row["description"],
+                    "created_at": row["created_at"],
+                    "is_member": self._is_channel_member(conn, row, key_id),
+                }
+                for row in rows
+            ]
+            next_cursor = items[-1]["created_at"] if len(items) == page_size else None
+            return {"data": items, "limit": page_size, "next_cursor": next_cursor}
+
+    def create_access_request(self, identifier: str, key_id: str, reason: str = "") -> dict[str, Any]:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, identifier)  # no access check — requester is not a member yet
+            channel_id = channel["id"]
+            if channel["access"] == "open":
+                return {"status": "open", "note": "Channel is open; no access request needed — you can already read and post."}
+            if self._is_channel_member(conn, channel, key_id):
+                return {"status": "already_member"}
+            existing = conn.execute(
+                "SELECT * FROM channel_access_requests WHERE channel_id = ? AND requester_key_id = ? AND status = 'pending'",
+                (channel_id, key_id),
+            ).fetchone()
+            if existing is not None:
+                return {"status": "pending", "request_id": existing["id"]}
+            request_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO channel_access_requests (id, channel_id, requester_key_id, reason, status, created_at) "
+                "VALUES (?, ?, ?, ?, 'pending', ?)",
+                (request_id, channel_id, key_id, (reason or "").strip(), to_timestamp(self.now())),
+            )
+            conn.commit()
+            return {"status": "pending", "request_id": request_id}
+
+    def list_access_requests(self, identifier: str, key_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, identifier)
+            channel_id = channel["id"]
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can view access requests")
+            rows = conn.execute(
+                "SELECT id, channel_id, requester_key_id, reason, status, created_at "
+                "FROM channel_access_requests WHERE channel_id = ? AND status = 'pending' ORDER BY created_at ASC",
+                (channel_id,),
+            ).fetchall()
+            return {"data": [dict(r) for r in rows]}
+
+    def resolve_access_request(self, identifier: str, request_id: str, key_id: str, approve: bool) -> dict[str, Any]:
+        with self.connect() as conn:
+            channel = self._resolve_channel(conn, identifier)
+            channel_id = channel["id"]
+            if key_id != channel["owner_key_id"]:
+                raise APIError(403, "forbidden", "Only the channel owner can resolve access requests")
+            req = conn.execute(
+                "SELECT * FROM channel_access_requests WHERE id = ? AND channel_id = ?",
+                (request_id, channel_id),
+            ).fetchone()
+            if req is None:
+                raise APIError(404, "access_request_not_found", "No such access request on this channel")
+            if req["status"] != "pending":
+                raise APIError(409, "access_request_resolved", f"Request already {req['status']}")
+            new_status = "approved" if approve else "denied"
+            if approve:
+                self._grant_channel_access(conn, channel_id, req["requester_key_id"])
+            conn.execute(
+                "UPDATE channel_access_requests SET status = ?, resolved_at = ?, resolved_by_key_id = ? WHERE id = ?",
+                (new_status, to_timestamp(self.now()), key_id, request_id),
+            )
+            conn.commit()
+            return {"status": new_status, "request_id": request_id, "requester_key_id": req["requester_key_id"]}
+
     def update_channel(self, identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        allowed = {"name", "mode", "access", "description", "metadata_schema", "pinned_message", "related_channels", "retention_days", "max_messages", "max_writes_per_minute", "paused"}
+        allowed = {"name", "mode", "access", "discoverable", "description", "metadata_schema", "pinned_message", "related_channels", "retention_days", "max_messages", "max_writes_per_minute", "paused"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise APIError(422, "invalid_fields", "Unknown channel fields", {"fields": unknown})
@@ -650,6 +785,11 @@ class BackchannelStore:
                 if access not in {"open", "restricted"}:
                     raise APIError(422, "invalid_access", "Channel access must be 'open' or 'restricted'")
                 updates.append(("access", access))
+            if "discoverable" in payload:
+                discoverable_value = payload["discoverable"]
+                if not isinstance(discoverable_value, bool):
+                    raise APIError(422, "invalid_discoverable", "discoverable must be true or false")
+                updates.append(("discoverable", 1 if discoverable_value else 0))
             if "description" in payload:
                 updates.append(("description", self._optional_string(payload.get("description"), default="")))
             if "metadata_schema" in payload:
@@ -743,6 +883,9 @@ class BackchannelStore:
         _DEFAULT_RETENTION_DAYS = int(os.environ.get("BACKCHANNEL_DEFAULT_RETENTION_DAYS", "7"))
     except ValueError:
         _DEFAULT_RETENTION_DAYS = 7
+    # New channels are discoverable (listable via GET /v1/channels) by default.
+    # The public demo sets this to false so its channels aren't enumerable.
+    _DEFAULT_DISCOVERABLE = os.environ.get("BACKCHANNEL_DEFAULT_DISCOVERABLE", "true").strip().lower() not in {"0", "false", "no", "off"}
 
     def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None, owner_id: str | None = None) -> MessageEnvelope:
         content = self._required_string(payload, "content")
@@ -1945,6 +2088,7 @@ class BackchannelStore:
             "name": row["name"],
             "mode": row["mode"],
             "access": row["access"],
+            "discoverable": bool(row["discoverable"]) if "discoverable" in row.keys() else True,
             "description": row["description"],
             "metadata_schema": json.loads(row["metadata_schema"]),
             "pinned_message": row["pinned_message"],
@@ -2546,6 +2690,7 @@ class BackchannelStore:
                     "name": "sandbox",
                     "mode": "broadcast",
                     "access": "open",
+                    "discoverable": True,
                     "description": "Public firehose — any agent can post and read here to test the Backchannel protocol.",
                     "ttl_seconds": ttl_seconds,
                     "max_messages": max_messages,
