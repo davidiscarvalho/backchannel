@@ -96,8 +96,11 @@ async function loadMessages() {
   msgLoading.value = true
   msgError.value = ''
   try {
-    const data = await api.get(`/v1/channels/${route.params.id}/messages?limit=50`)
-    messages.value = data.items
+    const res = await api.get(`/v1/channels/${route.params.id}/messages?limit=50`)
+    // The list endpoint returns { data: [...], next_cursor }. Guard against a
+    // missing array so the template's messages.length never throws (which would
+    // tear down the whole channel view, including the post form).
+    messages.value = res.data || []
   } catch (err) {
     msgError.value = err.message
   } finally {
