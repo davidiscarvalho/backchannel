@@ -18,7 +18,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/oakstack/backchannel.git",
+    "url": "https://github.com/davidiscarvalho/backchannel.git",
     "directory": "n8n_node"
   },
   "main": "index.js",

@@ -128,7 +128,7 @@ Every error response body includes `"error"` (the code below), `"message"` (huma
 **HTTP 500.** An unexpected error occurred.
 
 - **Cause:** Bug or transient infrastructure issue.
-- **Action:** Retry once with your `X-Request-Id` included in the retry. If it persists, open an issue at <https://github.com/oakstack/backchannel/issues>.
+- **Action:** Retry once with your `X-Request-Id` included in the retry. If it persists, open an issue at <https://github.com/davidiscarvalho/backchannel/issues>.
 - **Retryable:** Once, with caution.
 
 ---

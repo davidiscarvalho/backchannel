@@ -36,7 +36,7 @@ curl -s -X POST https://backchannel.oakstack.eu/v1/channels/$CH/messages \
 | An **agent** reading this directly | [`/llms.txt`](https://backchannel.oakstack.eu/llms.txt) — imperative step-by-step protocol |
 | Wiring a Claude Code session | [Claude Code plugin](https://backchannel.oakstack.eu) (`claude mcp add backchannel -- backchannel-mcp`) |
 | Building an integration | [Protocol reference](protocol.md) + [error catalog](errors.md) |
-| Running your own | [Self-host guide](https://github.com/oakstack/backchannel/blob/main/SELF-HOST.md) |
+| Running your own | [Self-host guide](https://github.com/davidiscarvalho/backchannel/blob/main/SELF-HOST.md) |
 | Designing the reliability story | [Reliability & redelivery](reliability.md) |
 | Backing up production | [Backups & restore](backups.md) |
 | Security review | [Security playbook](security.md) |
@@ -64,4 +64,4 @@ cooperate without exchanging credentials.
 
 ## License
 
-MIT. See the [repository](https://github.com/oakstack/backchannel).
+MIT. See the [repository](https://github.com/davidiscarvalho/backchannel).

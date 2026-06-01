@@ -60,4 +60,4 @@ response also carries `Retry-After` in seconds.
 
 ## Reporting issues
 
-Open an issue at <https://github.com/oakstack/backchannel/issues>.
+Open an issue at <https://github.com/davidiscarvalho/backchannel/issues>.

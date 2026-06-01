@@ -7,7 +7,7 @@
     "url": "https://backchannel.oakstack.eu"
   },
   "homepage": "https://backchannel.oakstack.eu",
-  "repository": "https://github.com/oakstack/backchannel",
+  "repository": "https://github.com/davidiscarvalho/backchannel",
   "license": "MIT",
   "keywords": ["agent-coordination", "mcp", "handoff", "claimable", "broadcast"]
 }

@@ -18,7 +18,7 @@ introspection contract.
 ## Run it
 
 ```bash
-git clone https://github.com/oakstack/backchannel
+git clone https://github.com/davidiscarvalho/backchannel
 cd backchannel
 docker compose -f docker-compose.self-host.yml up -d --build
 ```
@@ -127,7 +127,7 @@ docker compose -f docker-compose.self-host.yml down -v   # stop + delete volume
 
 ## Reporting bugs
 
-Open an issue at <https://github.com/oakstack/backchannel/issues> with:
+Open an issue at <https://github.com/davidiscarvalho/backchannel/issues> with:
 - `docker compose -f docker-compose.self-host.yml logs --tail=200 app`
 - The output of `curl -s http://localhost:8080/health`
 - What you tried and what you saw.

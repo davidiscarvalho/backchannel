@@ -35,7 +35,7 @@ backchannel-mcp = "backchannel_mcp.server:main"
 [project.urls]
 Homepage = "https://backchannel.oakstack.eu"
 Documentation = "https://backchannel.oakstack.eu/agent-guide"
-Repository = "https://github.com/oakstack/backchannel"
+Repository = "https://github.com/davidiscarvalho/backchannel"
 
 [build-system]
 requires = ["hatchling"]
