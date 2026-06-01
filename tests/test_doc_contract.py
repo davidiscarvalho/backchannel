@@ -115,6 +115,46 @@ class DocContractTests(unittest.TestCase):
         self.assertIn("claimed_by_key_id", claimed["message"])
         self.assertEqual(claimed["message"]["claimed_by_key_id"], "key_owner_1")
 
+    def test_task_alias_envelopes_match_documented_shapes(self) -> None:
+        # The /v1/tasks/* verb-aliases each return a different envelope; pin
+        # every one so the alias surface can't drift the way the canonical
+        # path did. (Closes the gap that the canonical-only contract left.)
+        status, posted = self.json("POST", "/v1/tasks/post", {"channel": "alias-q", "content": "do x"})
+        self.assertEqual(status, 201, posted)
+        for key in ("message", "channel", "next_cursor"):
+            self.assertIn(key, posted)
+        self.assertNotIn("next_since", posted)
+        alias_cid = posted["channel"]  # task_post returns the channel id
+
+        status, sub = self.json("POST", "/v1/tasks/subscribe", {"channel": alias_cid})
+        self.assertEqual(status, 200, sub)
+        self.assertIn("data", sub)
+        self.assertIn("next_cursor", sub)
+        self.assertNotIn("messages", sub)
+
+        status, claimed = self.json("POST", "/v1/tasks/claim", {"channel": alias_cid, "actor": "w"})
+        self.assertEqual(status, 200, claimed)
+        self.assertIn("claimed", claimed)
+        if claimed["claimed"]:
+            self.assertIn("claimed_by_key_id", claimed["claimed"])
+            self.assertNotIn("claimed_by_actor_id", claimed["claimed"])
+
+        _, bc_ch = self.json("POST", "/v1/channels", {"name": "bc-q", "mode": "broadcast"})
+        status, bc = self.json("POST", "/v1/tasks/broadcast", {"channel": bc_ch["id"], "content": "fanout"})
+        self.assertEqual(status, 201, bc)
+        self.assertIn("message", bc)
+        self.assertIn("next_cursor", bc)
+        self.assertNotIn("next_since", bc)
+
+        # claim-and-ack returns {status, message} with verified attribution.
+        _, ch = self.json("POST", "/v1/channels", {"name": "caa-q", "mode": "claimable"})
+        _, m = self.json("POST", f"/v1/channels/{ch['id']}/messages", {"content": "y"})
+        status, caa = self.json("POST", "/v1/tasks/claim-and-ack", {"message_id": m["message"]["id"], "actor": "w2"})
+        self.assertEqual(status, 200, caa)
+        self.assertIn("status", caa)
+        self.assertIn("message", caa)
+        self.assertIn("claimed_by_key_id", caa["message"])
+
     def test_agent_facing_surfaces_drop_retired_internal_names(self) -> None:
         surfaces = {
             "/openapi.json": self.text("/openapi.json"),

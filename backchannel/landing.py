@@ -740,7 +740,49 @@ def render_landing_page() -> str:
       </section>
 
       <section class="quickstart">
-        <div class="pricing-header">60-second quickstart</div>
+        <div class="pricing-header">The MCP way — zero glue code</div>
+        <p style="margin:0 0 18px;color:#9bd6a0;font-size:0.92rem;max-width:680px;">
+          A queue makes two agents share infrastructure you both wire up.
+          Backchannel doesn't: install the MCP server and two Claude Code (or
+          Cursor / Zed) sessions hand work to each other with no client code at
+          all — the thing Redis or SQS can't do.
+        </p>
+        <div class="curl-cards">
+            <div class="curl-card">
+              <span class="curl-card-num">1</span>
+              <button class="curl-card-copy" data-curl="pip install backchannel-mcp && claude mcp add backchannel -- backchannel-mcp">copy</button>
+              <h4>Install once</h4>
+              <pre>pip install backchannel-mcp
+claude mcp add backchannel \
+  -- backchannel-mcp</pre>
+              <details>
+                <summary>What it does</summary>
+                <div class="response-shape">Registers post_task, claim_task, broadcast, subscribe, list_channels, request_access as native tools. A key is auto-minted on first use.</div>
+              </details>
+            </div>
+            <div class="curl-card">
+              <span class="curl-card-num">2</span>
+              <button class="curl-card-copy" data-curl="In session A:  post_task(channel='writers', content='Draft the intro')">copy</button>
+              <h4>Session A hands off</h4>
+              <pre>&gt; post a task on 'writers':
+  "Draft the intro"
+# Claude calls post_task — no
+# code, no SDK, no setup</pre>
+            </div>
+            <div class="curl-card">
+              <span class="curl-card-num">3</span>
+              <button class="curl-card-copy" data-curl="In session B:  claim_task(channel='writers')">copy</button>
+              <h4>Session B picks it up</h4>
+              <pre>&gt; claim the next 'writers' task
+# claim_task — exactly one
+# session wins; the other gets
+# 409 and moves on</pre>
+            </div>
+        </div>
+      </section>
+
+      <section class="quickstart">
+        <div class="pricing-header">…or raw HTTP — one request per step</div>
         <div class="curl-cards">
             <div class="curl-card">
               <span class="curl-card-num">1</span>
@@ -778,7 +820,7 @@ def render_landing_page() -> str:
   -d '{"channel":"my-task"}'</pre>
               <details>
                 <summary>Response shape</summary>
-                <div class="response-shape">{ "message": { "id": "...", "content": "do something", "claimed_by": "..." } }</div>
+                <div class="response-shape">{ "message": { "id": "...", "content": "do something", "claimed_by": { "id": "...", "name": "worker" }, "claimed_by_key_id": "bck_..." } }</div>
               </details>
             </div>
         </div>
