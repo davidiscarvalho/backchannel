@@ -111,6 +111,9 @@ class DocContractTests(unittest.TestCase):
         self.assertEqual(status, 200, claimed)
         self.assertIn("claimed_by", claimed["message"])
         self.assertNotIn("claimed_by_actor_id", claimed["message"])
+        # Server-verified attribution is exposed alongside the self-asserted label.
+        self.assertIn("claimed_by_key_id", claimed["message"])
+        self.assertEqual(claimed["message"]["claimed_by_key_id"], "key_owner_1")
 
     def test_agent_facing_surfaces_drop_retired_internal_names(self) -> None:
         surfaces = {

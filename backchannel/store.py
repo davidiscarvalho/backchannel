@@ -388,6 +388,9 @@ class BackchannelStore:
             self._ensure_column(conn, "channels", "paused", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "messages", "lease_token", "TEXT")
             self._ensure_column(conn, "messages", "lease_expires_at", "TEXT")
+            # Server-verified key behind a claim — trustworthy attribution
+            # alongside the self-asserted claimed_by actor label.
+            self._ensure_column(conn, "messages", "claimed_by_key_id", "TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS key_scopes (
@@ -741,7 +744,7 @@ class BackchannelStore:
     except ValueError:
         _DEFAULT_RETENTION_DAYS = 7
 
-    def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> MessageEnvelope:
+    def create_message(self, channel_identifier: str, payload: dict[str, Any], key_id: str, team_id: str | None = None, owner_id: str | None = None) -> MessageEnvelope:
         content = self._required_string(payload, "content")
         content_bytes = content.encode("utf-8")
         if len(content_bytes) > self._MAX_CONTENT_BYTES:
@@ -797,7 +800,7 @@ class BackchannelStore:
                     )
             actor = None
             if actor_identifier is not None:
-                actor = self._resolve_actor(conn, self._optional_string(actor_identifier))
+                actor = self._resolve_actor(conn, self._optional_string(actor_identifier), owner_id=owner_id)
 
             conn.execute(
                 """
@@ -932,7 +935,7 @@ class BackchannelStore:
                 "next_cursor": next_cursor,
             }
 
-    def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
+    def ack_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
@@ -944,7 +947,7 @@ class BackchannelStore:
             channel = self._get_channel_by_id(conn, message["channel_id"])
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
-            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id, owner_id=owner_id)
             existing = conn.execute(
                 """
                 SELECT id
@@ -976,7 +979,7 @@ class BackchannelStore:
                 "message": self._serialize_message(conn, refreshed),
             }
 
-    def claim_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
+    def claim_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         metadata = self._ensure_mapping(payload.get("metadata", {}), "metadata")
 
@@ -990,7 +993,7 @@ class BackchannelStore:
                 raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
 
-            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id, owner_id=owner_id)
             now = self.now()
             previous_holder_id = message["claimed_by_actor_id"]
             if previous_holder_id:
@@ -1012,9 +1015,9 @@ class BackchannelStore:
 
             claimed_at = to_timestamp(now)
             cursor = conn.execute(
-                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, lease_token = NULL, lease_expires_at = NULL "
+                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, claimed_by_key_id = ?, lease_token = NULL, lease_expires_at = NULL "
                 "WHERE id = ? AND (claimed_by_actor_id IS NULL OR (lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
-                (actor["id"], claimed_at, message_id, claimed_at),
+                (actor["id"], claimed_at, key_id, message_id, claimed_at),
             )
             if cursor.rowcount == 0:
                 raise APIError(409, "already_claimed", "This message has already been claimed")
@@ -1041,7 +1044,7 @@ class BackchannelStore:
             refreshed = self._get_message(conn, message_id)
             return {"status": "claimed", "message": self._serialize_message(conn, refreshed)}
 
-    def release_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
+    def release_message(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         with self.connect() as conn:
             message = self._get_message(conn, message_id)
@@ -1053,18 +1056,18 @@ class BackchannelStore:
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
             if not message["claimed_by_actor_id"]:
                 raise APIError(409, "not_claimed", "This message is not claimed and cannot be released")
-            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id, owner_id=owner_id)
             if message["claimed_by_actor_id"] != actor["id"]:
                 raise APIError(403, "forbidden", "Only the claiming actor can release this message")
             conn.execute(
-                "UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL WHERE id = ?",
+                "UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL, claimed_by_key_id = NULL WHERE id = ?",
                 (message_id,),
             )
             conn.commit()
             refreshed = self._get_message(conn, message_id)
             return {"status": "released", "message": self._serialize_message(conn, refreshed)}
 
-    def claim_with_lease(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None) -> dict[str, Any]:
+    def claim_with_lease(self, message_id: str, payload: dict[str, Any], key_id: str, team_id: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         actor_identifier = self._optional_string(payload.get("actor"), allow_none=True)
         lease_seconds = payload.get("lease_seconds", 300)
         if not isinstance(lease_seconds, int) or lease_seconds < 30 or lease_seconds > 3600:
@@ -1079,7 +1082,7 @@ class BackchannelStore:
             if channel["mode"] != "claimable":
                 raise APIError(409, "channel_not_claimable", "Only messages in claimable channels can be claimed")
             self._check_channel_access(conn, channel, key_id, team_id=team_id)
-            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id)
+            actor = self._resolve_or_create_actor(conn, actor_identifier, key_id, owner_id=owner_id)
             now = self.now()
             previous_holder_id = message["claimed_by_actor_id"]
             if previous_holder_id:
@@ -1098,9 +1101,9 @@ class BackchannelStore:
             lease_expires_at = to_timestamp(now + timedelta(seconds=lease_seconds))
 
             cursor = conn.execute(
-                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, lease_token = ?, lease_expires_at = ? "
+                "UPDATE messages SET claimed_by_actor_id = ?, claimed_at = ?, claimed_by_key_id = ?, lease_token = ?, lease_expires_at = ? "
                 "WHERE id = ? AND (claimed_by_actor_id IS NULL OR (lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
-                (actor["id"], claimed_at, lease_token, lease_expires_at, message_id, claimed_at),
+                (actor["id"], claimed_at, key_id, lease_token, lease_expires_at, message_id, claimed_at),
             )
             if cursor.rowcount == 0:
                 raise APIError(409, "already_claimed", "This message has already been claimed")
@@ -1158,7 +1161,7 @@ class BackchannelStore:
             ).fetchall()
             for row in rows:
                 cur = conn.execute(
-                    "UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL, lease_token = NULL, lease_expires_at = NULL "
+                    "UPDATE messages SET claimed_by_actor_id = NULL, claimed_at = NULL, claimed_by_key_id = NULL, lease_token = NULL, lease_expires_at = NULL "
                     "WHERE id = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
                     (row["id"], now),
                 )
@@ -1776,9 +1779,10 @@ class BackchannelStore:
             (str(uuid.uuid4()), channel_id, key_id, to_timestamp(self.now()), invitation_id),
         )
 
-    def _resolve_actor(self, conn: sqlite3.Connection, identifier: str) -> sqlite3.Row:
+    def _resolve_actor(self, conn: sqlite3.Connection, identifier: str, owner_id: str | None = None) -> sqlite3.Row:
         actor = conn.execute("SELECT * FROM actors WHERE id = ?", (identifier,)).fetchone()
         if actor is not None:
+            self._assert_actor_owned(actor, owner_id)
             return actor
         actor = conn.execute(
             """
@@ -1791,6 +1795,7 @@ class BackchannelStore:
         ).fetchone()
         if actor is None:
             raise APIError(404, "actor_not_found", f"Unknown actor '{identifier}'")
+        self._assert_actor_owned(actor, owner_id)
         return actor
 
     def _owner_for_key(self, conn: sqlite3.Connection, key_id: str) -> tuple[str | None, str | None]:
@@ -1802,24 +1807,42 @@ class BackchannelStore:
             return None, None
         return row["owner_id"], row["agent_label"]
 
+    @staticmethod
+    def _assert_actor_owned(actor: sqlite3.Row, owner_id: str | None) -> None:
+        """A key may only act as actors its owner registered. Resolving another
+        owner's actor by id/alias is rejected so claimed_by attribution cannot
+        be spoofed on a shared instance."""
+        actor_owner = actor["owner_id"] if "owner_id" in actor.keys() else None
+        if actor_owner is not None and owner_id is not None and actor_owner != owner_id:
+            raise APIError(403, "actor_forbidden", "You can only act as an actor your own key registered")
+
     def _resolve_or_create_actor(
-        self, conn: sqlite3.Connection, identifier: str | None, key_id: str
+        self, conn: sqlite3.Connection, identifier: str | None, key_id: str, owner_id: str | None = None
     ) -> sqlite3.Row:
         """Resolve an actor by id, alias, or name (name scoped to the key's
         owner). If `identifier` is empty, fall back to the key's own default
         actor (named after the agent label). The actor is auto-created when it
         does not exist yet, so callers never have to pre-register one — claim,
-        ack and release just work with a plain name or with no actor at all."""
-        owner_id, agent_label = self._owner_for_key(conn, key_id)
+        ack and release just work with a plain name or with no actor at all.
+
+        `owner_id` is the authenticated caller's owner (from request.auth); it
+        is the source of truth for both name-scoping and the actor-ownership
+        check, so attribution holds regardless of authenticator. It falls back
+        to the api_keys lookup only when not supplied."""
+        derived_owner, agent_label = self._owner_for_key(conn, key_id)
+        if owner_id is None:
+            owner_id = derived_owner
         name = (identifier or "").strip()
         if not name:
             name = agent_label or owner_id or "default"
 
-        # 1. exact id
+        # 1. exact id — scoped to the caller's owner so a key cannot act as
+        #    another owner's registered actor (attribution spoofing).
         actor = conn.execute("SELECT * FROM actors WHERE id = ?", (name,)).fetchone()
         if actor is not None:
+            self._assert_actor_owned(actor, owner_id)
             return actor
-        # 2. alias
+        # 2. alias — same owner scope as id resolution.
         actor = conn.execute(
             """
             SELECT a.*
@@ -1830,6 +1853,7 @@ class BackchannelStore:
             (name,),
         ).fetchone()
         if actor is not None:
+            self._assert_actor_owned(actor, owner_id)
             return actor
         # 3. name, scoped to this key's owner (avoids cross-tenant collisions)
         if owner_id is not None:
@@ -1993,6 +2017,7 @@ class BackchannelStore:
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],
             "claimed_by": claimed_by,
+            "claimed_by_key_id": row["claimed_by_key_id"] if "claimed_by_key_id" in row.keys() else None,
             "claimed_at": row["claimed_at"],
             "acknowledged_by": acks,
             "active": parse_timestamp(row["expires_at"]) > self.now(),

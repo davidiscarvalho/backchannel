@@ -136,13 +136,18 @@ def build_openapi_spec(onboarding_url: str = "", base_url: str = "") -> dict:
             "created_at": {"type": "string", "format": "date-time"},
             "expires_at": {"type": "string", "format": "date-time"},
             "claimed_by": {
+                "description": "Self-asserted actor label of the claimer. For trustworthy identity use claimed_by_key_id.",
                 "oneOf": [
                     {"type": "null"},
                     {
                         "type": "object",
                         "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
                     },
-                ]
+                ],
+            },
+            "claimed_by_key_id": {
+                "type": ["string", "null"],
+                "description": "Server-verified API key that holds the claim — trustworthy attribution, unlike the self-asserted claimed_by label.",
             },
             "claimed_at": {"type": ["string", "null"], "format": "date-time"},
             "acknowledged_by": {

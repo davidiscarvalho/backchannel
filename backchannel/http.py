@@ -907,6 +907,9 @@ the protocol before wiring up your own channels:
   {{"actor": "<your agent name>"}}
      → 200 if you got it, 409 if another agent claimed first.
        Do not retry on 409 — pick the next message.
+       The response's claimed_by is a self-asserted label; claimed_by_key_id is
+       the server-verified key that holds the claim. You can only act as actors
+       your own key registered (else 403 actor_forbidden).
 
   POST {base}/v1/messages/<message-id>/claim-with-lease
   {{"actor": "<your agent name>", "lease_seconds": 60}}
@@ -1032,7 +1035,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
 
     def create_message(self, request: Request, identifier: str) -> Response:
         self._require_scope(request.auth, "messages:write")
-        envelope = self.store.create_message(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        envelope = self.store.create_message(identifier, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
     def list_messages(self, request: Request, identifier: str) -> Response:
@@ -1111,20 +1114,20 @@ one consistent response envelope; the aliases exist only to save a round trip.
         return self.json_response(200, payload)
 
     def ack_message(self, request: Request, message_id: str) -> Response:
-        payload = self.store.ack_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        payload = self.store.ack_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(200, payload)
 
     def claim_message(self, request: Request, message_id: str) -> Response:
         self._require_scope(request.auth, "messages:claim")
-        payload = self.store.claim_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        payload = self.store.claim_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(200, payload)
 
     def release_message(self, request: Request, message_id: str) -> Response:
-        payload = self.store.release_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        payload = self.store.release_message(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(200, payload)
 
     def claim_message_with_lease(self, request: Request, message_id: str) -> Response:
-        payload = self.store.claim_with_lease(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id)
+        payload = self.store.claim_with_lease(message_id, request.json(), key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(200, payload)
 
     def heartbeat_lease(self, request: Request, lease_token: str) -> Response:
@@ -1231,6 +1234,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
             },
             key_id=request.auth.key_id,
             team_id=request.auth.team_id,
+            owner_id=request.auth.owner_id,
         )
         return self.json_response(
             201,
@@ -1260,7 +1264,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
             try:
                 claim_result = self.store.claim_message(
                     msg["id"], {"actor": actor, "metadata": body.get("metadata", {})},
-                    key_id=request.auth.key_id, team_id=request.auth.team_id,
+                    key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id,
                 )
                 if claim_result["status"] == "claimed":
                     return self.json_response(200, {"claimed": claim_result["message"]})
@@ -1295,6 +1299,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
             {"content": body.get("content", ""), "actor_label": body.get("actor_label"), "metadata": body.get("metadata", {})},
             key_id=request.auth.key_id,
             team_id=request.auth.team_id,
+            owner_id=request.auth.owner_id,
         )
         return self.json_response(201, {"message": envelope.message, "next_cursor": envelope.cursor})
 
@@ -1305,10 +1310,10 @@ one consistent response envelope; the aliases exist only to save a round trip.
         if not message_id:
             raise APIError(422, "missing_field", "'message_id' is required")
         metadata = body.get("metadata", {})
-        claim_result = self.store.claim_message(message_id, {"actor": actor, "metadata": metadata}, key_id=request.auth.key_id, team_id=request.auth.team_id)
+        claim_result = self.store.claim_message(message_id, {"actor": actor, "metadata": metadata}, key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         if claim_result["status"] == "already_claimed" and claim_result["message"].get("claimed_by", {}) and claim_result["message"]["claimed_by"].get("id") != actor:
             raise APIError(409, "already_claimed", "This message has already been claimed by another actor")
-        ack_result = self.store.ack_message(message_id, {"actor": actor, "metadata": metadata}, key_id=request.auth.key_id, team_id=request.auth.team_id)
+        ack_result = self.store.ack_message(message_id, {"actor": actor, "metadata": metadata}, key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id)
         return self.json_response(200, {"status": "claimed_and_acked", "message": ack_result["message"]})
 
     def task_create_claimable_session(self, request: Request) -> Response:
@@ -1365,6 +1370,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
             },
             key_id=request.auth.key_id,
             team_id=request.auth.team_id,
+            owner_id=request.auth.owner_id,
         )
         message = envelope.message
         message_id = message["id"]
@@ -1407,6 +1413,7 @@ one consistent response envelope; the aliases exist only to save a round trip.
             },
             key_id=request.auth.key_id,
             team_id=request.auth.team_id,
+            owner_id=request.auth.owner_id,
         )
         message = envelope.message
         return self.json_response(201, {"result_channel": result_channel, "message": message})
