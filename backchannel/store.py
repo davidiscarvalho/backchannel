@@ -1876,21 +1876,31 @@ class BackchannelStore:
             "expires_at": row["expires_at"],
         }
 
-    def _resolve_channel(self, conn: sqlite3.Connection, identifier: str, key_id: str | None = None, team_id: str | None = None) -> sqlite3.Row:
+    def _resolve_channel(self, conn: sqlite3.Connection, identifier: str, key_id: str | None = None, team_id: str | None = None, owner_id: str | None = None) -> sqlite3.Row:
         channel = conn.execute("SELECT * FROM channels WHERE id = ?", (identifier,)).fetchone()
-        if channel is not None:
-            if key_id is not None:
-                self._check_channel_access(conn, channel, key_id, team_id=team_id)
-            return channel
-        channel = conn.execute(
-            """
-            SELECT c.*
-            FROM channel_aliases ca
-            JOIN channels c ON c.id = ca.channel_id
-            WHERE ca.alias = ?
-            """,
-            (identifier,),
-        ).fetchone()
+        if channel is None:
+            channel = conn.execute(
+                """
+                SELECT c.*
+                FROM channel_aliases ca
+                JOIN channels c ON c.id = ca.channel_id
+                WHERE ca.alias = ?
+                """,
+                (identifier,),
+            ).fetchone()
+        if channel is None and key_id is not None:
+            # Name resolution, scoped to the caller's owner. The verb-aliases
+            # and MCP tools refer to channels by name (a second session only
+            # knows "writers", not its uuid), so a plain name must resolve to
+            # the caller's own channel of that name. Scoped by owner to avoid
+            # cross-tenant collisions on a shared instance.
+            if owner_id is None:
+                owner_id, _ = self._owner_for_key(conn, key_id)
+            if owner_id is not None:
+                channel = conn.execute(
+                    "SELECT * FROM channels WHERE name = ? AND owner_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (identifier, owner_id),
+                ).fetchone()
         if channel is None:
             raise APIError(404, "channel_not_found", f"Unknown channel '{identifier}'")
         if key_id is not None:

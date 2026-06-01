@@ -85,6 +85,19 @@ class AttributionTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(body["message"]["claimed_by_key_id"], "key_owner_b")
 
+    def test_channel_resolves_by_name_scoped_to_owner(self) -> None:
+        # The MCP/verb-alias wedge depends on a second session resolving a
+        # channel by NAME (it doesn't know the uuid). Must work, and must be
+        # owner-scoped so names don't collide across tenants.
+        _, ch = self.request("POST", "/v1/channels", {"name": "writers", "mode": "claimable"})
+        # Same owner, different reference style: name resolves.
+        status, by_name = self.request("GET", "/v1/channels/writers")
+        self.assertEqual(status, 200, by_name)
+        self.assertEqual(by_name["id"], ch["id"])
+        # A different owner's identical name does not resolve to A's channel.
+        status, _ = self.request("GET", "/v1/channels/writers", api_key="key-b")
+        self.assertEqual(status, 404)
+
     def test_plain_name_still_auto_creates_under_caller(self) -> None:
         mid = self._open_task()
         status, body = self.request("POST", f"/v1/messages/{mid}/claim", {"actor": "brand-new-name"}, api_key="key-b")
