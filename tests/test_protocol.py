@@ -194,7 +194,7 @@ class BackchannelProtocolTests(unittest.TestCase):
         status, headers, body = self.request_raw("GET", "/docs/roadmap.md")
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "text/markdown; charset=utf-8")
-        self.assertIn("## V1 Non-Goals", body)
+        self.assertIn("## Non-Goals", body)
 
     def test_claimable_channel_enforces_single_claim_and_tracks_acks(self) -> None:
         queue = self.create_channel("Queue Jobs", "claimable")

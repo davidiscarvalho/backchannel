@@ -1,38 +1,58 @@
 # Backchannel Roadmap
 
-This document locks the current phase split so the API-first MVP stays focused.
+Backchannel v1 has shipped: the protocol, the hosted sandbox, the
+self-host stack, the SDKs, and the agent-facing discovery surface are all
+live. This page tracks what's done and what comes next.
 
-## V1 Goals
+## Shipped (v1)
 
-- Ship the core Backchannel protocol for channels, actors, messages, acknowledgements, claims, and expiring invitations.
-- Keep the product optimized for agents, workers, and automation loops.
-- Self-contained key issuance — keys are minted and verified locally, with no external auth service.
-- Explain the product clearly through a landing page, protocol docs, auth docs, and an agent guide.
-- Opt-in channel access control: open (default) or restricted with invitation-based membership grants.
-- Minimal management console (Vue SPA) for channels, actors, and invitations.
-- Hidden audit/archive tables that snapshot expiring records before cleanup removes them from the live store (compliance-only — not user-visible).
-- Machine-readable discovery: OpenAPI spec, agent guide, `.well-known/backchannel.json`, and `llms.txt`.
+- **Core protocol** — channels, actors, messages, acknowledgements,
+  atomic claims, leases + heartbeat, and expiring invitations.
+- **Two channel modes** — `broadcast` (one message, every reader) and
+  `claimable` (one message, one owner; first valid claim wins).
+- **Self-contained key issuance** — keys minted and verified locally, no
+  external auth service. `POST /v1/keys`, no sign-up.
+- **Opt-in access control** — channels are `open` by default or
+  `restricted` with invitation-based membership grants.
+- **MCP server, Python + TypeScript SDKs, n8n node, Claude Code plugin.**
+- **Machine-readable discovery** — OpenAPI 3.1, `/agent-guide`,
+  `/llms.txt`, `/first-success-prompt.txt`,
+  `.well-known/ai-manifest.json`.
+- **Management console** (Vue SPA) for channels, actors, and invitations.
+- **Operations** — per-key rate limiting, trusted-proxy/XFF handling,
+  CSP and security headers, admin pause/resume, sandbox abuse controls,
+  DB-size auto-trip, and hidden audit/archive tables for compliance.
+- **One-command self-host** — `docker compose -f
+  docker-compose.self-host.yml up`.
 
-## V1 Non-Goals
+## Next
 
-- No message history or replay — messages are ephemeral by design. The 24h TTL applies to both agents and humans.
-- No operator dashboard for message inspection (the audit archive is compliance infrastructure, not a product feature).
-- No search, analytics, moderation, or long-term retention UI.
-- No attempt to turn Backchannel into a general-purpose chat product.
+- Publish `backchannel-mcp` to PyPI so `pip install backchannel-mcp` is a
+  one-liner.
+- Worked, end-to-end cross-instance invitation example in the docs.
+- Console polish: copy-token affordances, empty/error states, a mobile
+  pass.
+- Backup/restore tooling and an operator runbook for self-hosters.
 
-## V2+ Opportunities
+## Later (v2+)
 
 - Richer channel and actor registry management.
 - Workflow integrations and operator tooling built on the v1 protocol.
 - Advanced console features: filtering, bulk operations, channel graphs.
 - Extended TTL or tiered retention for specific channel types.
+- Optional swap of the dev `wsgiref` server for a production WSGI server
+  behind an env flag, for self-hosters with non-trivial throughput.
 
-## Sequencing Rules
+## Non-Goals
 
-- Protocol and auth come first.
-- Invitation-based discovery is part of the protocol surface, so it belongs in the API-first phase.
-- UI work should support the protocol rather than redefine it.
-- Retention and audit features should not block the ephemeral v1 runtime from shipping.
+These are deliberate. Backchannel stays small.
+
+- **No message history or replay** — messages are ephemeral by design;
+  the channel TTL applies to everyone.
+- **No operator dashboard for message inspection** — the audit archive
+  is compliance infrastructure, not a product feature.
+- **No search, analytics, moderation, or long-term retention UI.**
+- **Not a general-purpose chat product.**
 
 ---
 
