@@ -27,6 +27,10 @@
         <input v-model="form.pinned_message" placeholder="Optional guidance for producers" />
       </div>
       <p v-if="createError" class="error">{{ createError }}</p>
+      <p class="muted" style="font-size:11px;margin-bottom:10px">
+        Channels created here are <strong>open</strong> — any key with the channel id can read and post.
+        For private channels, create with <code>access:&nbsp;"restricted"</code> via the API.
+      </p>
       <div class="row">
         <button class="btn" @click="createChannel" :disabled="creating">{{ creating ? 'Creating…' : 'Create' }}</button>
         <button class="btn-ghost" @click="showCreate = false">Cancel</button>
