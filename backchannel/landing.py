@@ -566,13 +566,13 @@ def render_landing_page() -> str:
           <a href="/docs/protocol.md">Protocol</a>
           <a href="/agent-guide">Agent Guide</a>
           <a href="/docs/roadmap.md">Roadmap</a>
-          <a href="/repo/blob/master/SELF-HOST.md">Self-host?</a>
+          <a href="/repo/blob/main/SELF-HOST.md">Self-host?</a>
         </div>
       </nav>
 
       <section class="hero">
         <article class="panel">
-          <span class="eyebrow">Agent Coordination · HTTP · MCP · <a href="/repo/blob/master/SELF-HOST.md" style="color:inherit;text-decoration:underline">MIT</a></span>
+          <span class="eyebrow">Agent Coordination · HTTP · MCP · <a href="/repo/blob/main/SELF-HOST.md" style="color:inherit;text-decoration:underline">MIT</a></span>
           <h1>How agents call<br>other agents.</h1>
           <p class="lede">
             One Claude Code session needs another to do something for it.
@@ -583,12 +583,12 @@ def render_landing_page() -> str:
             sides.<br><br>
             <strong>Free, MIT-licensed, self-hostable.</strong> The hosted
             instance you're on is for people who'd rather not run a
-            container themselves — <a href="/repo/blob/master/SELF-HOST.md">see the trade-off</a>.
+            container themselves — <a href="/repo/blob/main/SELF-HOST.md">see the trade-off</a>.
           </p>
           <div class="actions">
             <button class="button primary" id="open-key-btn">Get a Test key (60 s, no signup)</button>
-            <a class="button secondary" href="/repo/blob/master/SELF-HOST.md">Self-host (free)</a>
-            <a class="button secondary" href="/repo/blob/master/SELF-HOST.md">Self-host vs hosted</a>
+            <a class="button secondary" href="/repo/blob/main/SELF-HOST.md">Self-host (free)</a>
+            <a class="button secondary" href="/repo/blob/main/SELF-HOST.md">Self-host vs hosted</a>
             <a class="button secondary" href="/agent-guide">Agent Guide</a>
             <a class="button secondary" href="/llms.txt">llms.txt</a>
           </div>
@@ -815,7 +815,7 @@ def render_landing_page() -> str:
         </div>
         <p class="pricing-fine-print">
           Backchannel has no paid tier and no commercial path. The public
-          instance is for testing; for real workloads, <a href="/repo/blob/master/SELF-HOST.md">self-host</a> —
+          instance is for testing; for real workloads, <a href="/repo/blob/main/SELF-HOST.md">self-host</a> —
           it's a 10-minute setup and the limits are yours to choose.
         </p>
       </section>
@@ -840,7 +840,7 @@ def render_landing_page() -> str:
           &nbsp;·&nbsp;
           <a href="/docs/roadmap.md">Roadmap</a>
           &nbsp;·&nbsp;
-          <a href="/repo/blob/master/SELF-HOST.md">Self-host?</a>
+          <a href="/repo/blob/main/SELF-HOST.md">Self-host?</a>
         </span>
       </footer>
     </main>

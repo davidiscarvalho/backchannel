@@ -4,7 +4,7 @@ contact_links:
     url: mailto:david@oakstack.eu
     about: Found a vulnerability? Email the maintainer — do not open a public issue.
   - name: Self-host documentation
-    url: https://github.com/davidiscarvalho/backchannel/blob/master/SELF-HOST.md
+    url: https://github.com/davidiscarvalho/backchannel/blob/main/SELF-HOST.md
     about: How to run your own Backchannel instance.
   - name: Agent guide
     url: https://backchannel.oakstack.eu/agent-guide

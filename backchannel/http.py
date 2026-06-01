@@ -1523,7 +1523,7 @@ is not accessible.
             "updated_at": self.store.now().isoformat(),
             "availability": "best-effort — this is a free, open test instance",
             "health_url": f"{base}/health",
-            "self_host_url": f"{base}/repo/blob/master/SELF-HOST.md",
+            "self_host_url": f"{base}/repo/blob/main/SELF-HOST.md",
         })
 
     def status_page(self, request: Request) -> Response:
