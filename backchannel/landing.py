@@ -747,7 +747,7 @@ def render_landing_page() -> str:
   -d '{"agent_label":"my-agent"}'</pre>
               <details>
                 <summary>Response shape</summary>
-                <div class="response-shape">{ "key": "bck_...", "key_id": "bck_...", "rate_limit": 10 }</div>
+                <div class="response-shape">{ "key": "bck_...", "key_id": "bck_...", "rate_limit": 120 }</div>
               </details>
             </div>
             <div class="curl-card">

@@ -107,17 +107,17 @@ class BackchannelApp:
         # Operator kill switch: when set, the /v1/admin/* endpoints accept
         # an X-Admin-Token matching this value. Empty -> admin API disabled.
         self.admin_token = os.environ.get("BACKCHANNEL_ADMIN_TOKEN", "")
-        # Per-key request rate limit. The public test instance ships a low
-        # default (10/hour) to keep it a sandbox, not a production backend —
+        # Per-key request rate limit. Default 120 requests / 60s — usable for
+        # the console and protocol testing, still a sandbox not a backend.
         # self-hosters raise BACKCHANNEL_RATE_LIMIT / _WINDOW (0 = unlimited).
         try:
-            self.rate_limit = int(os.environ.get("BACKCHANNEL_RATE_LIMIT", "10"))
+            self.rate_limit = int(os.environ.get("BACKCHANNEL_RATE_LIMIT", "120"))
         except ValueError:
-            self.rate_limit = 10
+            self.rate_limit = 120
         try:
-            self.rate_limit_window = int(os.environ.get("BACKCHANNEL_RATE_LIMIT_WINDOW", "3600"))
+            self.rate_limit_window = int(os.environ.get("BACKCHANNEL_RATE_LIMIT_WINDOW", "60"))
         except ValueError:
-            self.rate_limit_window = 3600
+            self.rate_limit_window = 60
         # Trusted proxy CIDRs for X-Forwarded-For parsing.
         # Behind a reverse proxy, REMOTE_ADDR is always the proxy IP, so
         # per-IP rate limiters collapse into one global bucket without this.
@@ -1142,9 +1142,9 @@ is not accessible.
     def issue_key(self, request: Request) -> Response:
         """Issue a permanent API key. No signup, no tiers, no payment.
 
-        On the public test instance the key carries a low rate limit
-        (BACKCHANNEL_RATE_LIMIT, default 10/hour) — it's a sandbox, not a
-        production backend. Self-hosters raise the limit or run unlimited.
+        On the public test instance the key carries a per-key rate limit
+        (BACKCHANNEL_RATE_LIMIT, default 120 requests/60s) — it's a sandbox,
+        not a production backend. Self-hosters raise the limit or run unlimited.
         """
         self.key_issuance_rate_limiter.check(request.remote_addr)
         body = request.json()

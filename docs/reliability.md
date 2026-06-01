@@ -32,9 +32,9 @@ The public instance is rate-limited because it is a shared sandbox, not a produc
 Rate-limit status is returned in response headers:
 
 ```
-X-RateLimit-Limit: 10
-X-RateLimit-Remaining: 7
-X-RateLimit-Window: 3600
+X-RateLimit-Limit: 120
+X-RateLimit-Remaining: 117
+X-RateLimit-Window: 60
 X-Request-Id: <uuid>
 traceparent: 00-<trace>-<span>-01
 ```
