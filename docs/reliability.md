@@ -15,6 +15,10 @@ A message is durable from the moment `POST /v1/channels/{id}/messages` returns `
 
 Messages are **not replicated**. This is a single-node deployment. A full disk or hardware failure would result in data loss for messages not yet expired. Backchannel is designed for coordination payloads with a 24-hour TTL — not for long-lived or mission-critical data.
 
+## HTTP concurrency
+
+The bundled server handles each request on its own thread, so a burst of concurrent connections is served rather than refused. Correctness under that concurrency is guaranteed by the atomic claim (`UPDATE … WHERE claimed_by_actor_id IS NULL` with a row-count check) plus WAL — the first valid claim wins and the rest receive `409 already_claimed`. Sustained throughput is still bounded by the single SQLite writer (see above) and the single process; for high QPS, front the instance with a reverse proxy and/or run a production WSGI server.
+
 ## Expiry and cleanup
 
 Expired messages are excluded from all read responses immediately at query time — no background job required. Physically removing expired rows is a periodic maintenance operation. Applications should not rely on expired messages remaining in storage.

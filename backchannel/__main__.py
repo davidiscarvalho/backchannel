@@ -6,10 +6,27 @@ import signal
 import threading
 import time
 from pathlib import Path
-from wsgiref.simple_server import make_server
+from socketserver import ThreadingMixIn
+from wsgiref.simple_server import WSGIServer, make_server
 
 from backchannel.http import create_app
 from backchannel.store import BackchannelStore
+
+
+class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
+    """Handle each request on its own thread.
+
+    Stock ``wsgiref`` is single-threaded with a listen backlog of 5, so a
+    burst of concurrent connections gets refused and everything else
+    serializes. A self-host instance is exposed directly (no proxy in the
+    default compose), so we thread the server here. SQLite WAL + the atomic
+    claim (``UPDATE … WHERE claimed_by_actor_id IS NULL``) keep correctness
+    under the resulting concurrency; this only removes the connection-refusal
+    sharp edge. For serious QPS, a production WSGI server is still the path.
+    """
+
+    daemon_threads = True
+    request_queue_size = 128
 
 
 # Module-level flag toggled by signal handlers. Subcommand loops poll it
@@ -203,12 +220,12 @@ def main() -> int:
 
     _install_signal_handlers()
     app = create_app(db_path=Path(args.db))
-    with make_server(args.host, args.port, app) as server:
+    with make_server(args.host, args.port, app, server_class=ThreadingWSGIServer) as server:
         print(f"Backchannel listening on http://{args.host}:{args.port}", flush=True)
         # Run serve_forever in a thread so the main thread can wait on
         # the shutdown event. On SIGTERM we ask the server to stop
-        # accepting new connections; in-flight requests complete because
-        # wsgiref handles each request on the main thread synchronously.
+        # accepting new connections; in-flight requests finish on their
+        # own worker threads before the process exits.
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
         try:
