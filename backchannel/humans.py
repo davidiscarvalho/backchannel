@@ -124,7 +124,7 @@ def render_humans_page(base_url: str) -> str:
     .bp h3 {{ color: var(--accent); }}
     .bp-blurb {{ margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; }}
     .codewrap {{ position: relative; }}
-    pre {{ background: rgba(0,0,0,0.45); border: 1px solid rgba(84,255,138,0.16); border-radius: 12px; padding: 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text); white-space: pre-wrap; word-break: break-word; }}
+    pre {{ background: rgba(0,0,0,0.45); border: 1px solid rgba(84,255,138,0.16); border-radius: 12px; padding: 40px 16px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text); white-space: pre-wrap; word-break: break-word; }}
     code {{ font-family: var(--font-mono); color: var(--accent); }}
     .copy-btn {{ position: absolute; top: 10px; right: 10px; padding: 4px 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,0.4); color: var(--muted); font-family: var(--font-mono); font-size: 0.72rem; cursor: pointer; }}
     .copy-btn:hover {{ color: var(--accent); border-color: var(--accent); }}
@@ -140,7 +140,7 @@ def render_humans_page(base_url: str) -> str:
   <div class="wrap">
     <div class="topnav">
       <a href="/">&larr; Backchannel</a>
-      <a href="{REPO}/blob/main/docs/protocol.md">Full docs on GitHub &rarr;</a>
+      <a href="{REPO}/tree/main/docs">Full docs on GitHub &rarr;</a>
     </div>
 
     <span class="eyebrow">For humans</span>
