@@ -130,15 +130,17 @@ def render_landing_page() -> str:
         margin-top: 28px;
         display: grid;
         grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-        grid-template-rows: auto auto;
         gap: 24px;
         align-items: start;
       }
-      .hero > article.panel { grid-column: 1; grid-row: 1 / span 2; }
-      .hero > .agent-discovery { grid-column: 2; grid-row: 1; }
-      .hero > .hero-diagram {
-        grid-column: 2;
-        grid-row: 2;
+      .hero-side {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+      .hero-side .agent-discovery { order: 0; }
+      .hero-diagram {
+        order: 1;
         border: 1px solid var(--line);
         border-radius: 24px;
         background: linear-gradient(180deg, rgba(8, 22, 9, 0.95), rgba(4, 10, 4, 0.92));
@@ -250,32 +252,6 @@ def render_landing_page() -> str:
       .quickstart {
         margin-top: 20px;
       }
-      .quickstart-label {
-        font-family: var(--font-mono);
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        color: var(--muted);
-        white-space: nowrap;
-      }
-      .quickstart-steps {
-        display: flex;
-        gap: 0;
-        flex-wrap: wrap;
-      }
-      .step {
-        font-family: var(--font-mono);
-        font-size: 0.78rem;
-        color: var(--muted);
-        padding: 6px 12px;
-        border: 1px solid var(--line);
-        background: rgba(0, 0, 0, 0.18);
-        white-space: nowrap;
-      }
-      .step:first-child { border-radius: 8px 0 0 8px; }
-      .step:last-child { border-radius: 0 8px 8px 0; }
-      .step + .step { border-left: none; }
-      .step strong { color: var(--accent); }
       /* Curl cards */
       .curl-cards {
         margin-top: 20px;
@@ -598,12 +574,6 @@ def render_landing_page() -> str:
         .pricing-tiers {
           grid-template-columns: 1fr;
         }
-        .hero > article.panel,
-        .hero > .agent-discovery,
-        .hero > .hero-diagram {
-          grid-column: auto;
-          grid-row: auto;
-        }
       }
     </style>
   </head>
@@ -659,6 +629,7 @@ def render_landing_page() -> str:
           </div>
         </article>
 
+        <div class="hero-side">
         <svg class="hero-diagram" viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:820px;display:block;" aria-label="How agents call other agents: Agent A posts a task to a claimable channel, Agent B claims it, Agent C gets 409">
             <style>
               @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
@@ -782,6 +753,7 @@ def render_landing_page() -> str:
             </p>
           </div>
         </nav>
+        </div>
       </section>
 
       <section class="quickstart">
