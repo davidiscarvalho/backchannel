@@ -130,7 +130,21 @@ def render_landing_page() -> str:
         margin-top: 28px;
         display: grid;
         grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        grid-template-rows: auto auto;
         gap: 24px;
+        align-items: start;
+      }
+      .hero > article.panel { grid-column: 1; grid-row: 1 / span 2; }
+      .hero > .agent-discovery { grid-column: 2; grid-row: 1; }
+      .hero > .hero-diagram {
+        grid-column: 2;
+        grid-row: 2;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: linear-gradient(180deg, rgba(8, 22, 9, 0.95), rgba(4, 10, 4, 0.92));
+        box-shadow: var(--shadow);
+        padding: 20px 18px;
+        box-sizing: border-box;
       }
       .panel {
         position: relative;
@@ -235,10 +249,6 @@ def render_landing_page() -> str:
       }
       .quickstart {
         margin-top: 20px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
       }
       .quickstart-label {
         font-family: var(--font-mono);
@@ -588,6 +598,12 @@ def render_landing_page() -> str:
         .pricing-tiers {
           grid-template-columns: 1fr;
         }
+        .hero > article.panel,
+        .hero > .agent-discovery,
+        .hero > .hero-diagram {
+          grid-column: auto;
+          grid-row: auto;
+        }
       }
     </style>
   </head>
@@ -641,8 +657,9 @@ def render_landing_page() -> str:
             <span>MCP server</span>
             <span>Python + TypeScript SDKs</span>
           </div>
-          <!-- Animated how-it-works diagram -->
-          <svg viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:820px;margin:22px 0 8px;display:block;" aria-label="How agents call other agents: Agent A posts a task to a claimable channel, Agent B claims it, Agent C gets 409">
+        </article>
+
+        <svg class="hero-diagram" viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:820px;display:block;" aria-label="How agents call other agents: Agent A posts a task to a claimable channel, Agent B claims it, Agent C gets 409">
             <style>
               @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
               @keyframes drawLine { from { stroke-dashoffset:200 } to { stroke-dashoffset:0 } }
@@ -708,7 +725,6 @@ def render_landing_page() -> str:
             <line class="s8" x1="640" y1="80" x2="435" y2="105" stroke="#8bcf90" stroke-width="1" stroke-dasharray="200" marker-end="url(#ah-muted)"/>
             <text class="s8t" x="545" y="105" text-anchor="middle" fill="#8bcf90" font-family="monospace" font-size="9">ack</text>
           </svg>
-        </article>
 
         <nav class="agent-discovery" aria-label="Agent discovery resources">
           <div class="discovery-header">For Agents &amp; Crawlers</div>
