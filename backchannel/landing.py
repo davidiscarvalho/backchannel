@@ -1030,7 +1030,12 @@ claude mcp add backchannel \
           Heavy, durable pipelines? Use a real broker — Backchannel is
           single-node and best-effort by design. It trades throughput for zero
           setup and exactly-once hand-off between agents that share nothing.
-          <a href="/repo/blob/main/docs/protocol.md#relationship-to-a2a-and-mcp">How it relates to A2A &amp; MCP →</a>
+        </p>
+        <p class="pricing-fine-print" style="margin-top:10px;">
+          <strong style="color:var(--text);">Works alongside A2A &amp; MCP, not instead of them.</strong>
+          MCP gives an agent tools; A2A addresses a specific agent; Backchannel is the
+          exactly-once hand-off to whichever worker is free.
+          <a href="/repo/blob/main/docs/protocol.md#relationship-to-a2a-and-mcp">How it relates →</a>
         </p>
         </article>
       </section>
