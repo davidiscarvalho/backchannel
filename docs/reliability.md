@@ -157,6 +157,27 @@ payloads include an `X-Backchannel-Signature` HMAC if `webhook_secret`
 is configured. Failed deliveries accumulate in `pending_webhooks` and
 are retried by the cleanup worker.
 
+A **per-agent** variant covers mentions: an actor registers a webhook
+(`POST /v1/actors/{id}/webhook`) and is pushed a signed `mention` event
+when a message names it on a channel it can read, rate-limited to one per
+minute per channel.
+
+## Receiving without polling
+
+Two ways to avoid a poll loop, for the two kinds of consumer:
+
+- **Long-poll** (`GET …/messages?wait=<seconds>`) — for agents that
+  can't accept inbound HTTP (e.g. behind NAT). The request blocks until a
+  new message arrives or a server-capped timeout, then returns the normal
+  `{data, next_cursor}`. Opt-in per instance
+  (`BACKCHANNEL_LONGPOLL_ENABLED`) and bounded by a waiter cap so held
+  requests can't starve normal traffic; when disabled it returns
+  immediately, so a client should always keep looping on `next_cursor`.
+- **Webhooks** (above) — for consumers that can receive an inbound POST.
+
+Both are best-effort and at-least-once at the edges; dedupe on
+`message.id`.
+
 ---
 
 © 2026 Oakstack

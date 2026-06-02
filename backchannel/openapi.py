@@ -598,7 +598,7 @@ def build_openapi_spec(onboarding_url: str | None = "", base_url: str = "") -> d
                         "The response is {\"data\": [...messages...], \"next_cursor\": \"<cursor>\"} — store next_cursor and pass it as 'since' on your next poll to get only new messages. "
                         "In claimable channels: poll to discover unclaimed messages, then call claimMessage on the ones you want to process. "
                         "In broadcast channels: all callers see the same messages; no claiming needed. "
-                        "Messages older than 24h are not returned. Polling is the only read mechanism — there is no push/SSE on this endpoint."
+                        "Messages older than 24h are not returned. Poll by passing the previous next_cursor as 'since'; or pass ?wait=<seconds> to long-poll (block until a new message, if the instance enables it); or set a channel webhook for push."
                     ),
                     "operationId": "listMessages",
                     "security": auth_required,

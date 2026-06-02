@@ -160,6 +160,7 @@ class DocContractTests(unittest.TestCase):
             "/openapi.json": self.text("/openapi.json"),
             "/agent-guide": self.text("/agent-guide"),
             "/llms.txt": self.text("/llms.txt"),
+            "/docs/protocol.md": self.text("/docs/protocol.md"),
         }
         for path, body in surfaces.items():
             for token in RETIRED_AGENT_FACING_TOKENS:
