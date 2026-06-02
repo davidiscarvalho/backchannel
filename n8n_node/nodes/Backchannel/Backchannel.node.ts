@@ -1,4 +1,5 @@
 import {
+  IDataObject,
   IExecuteFunctions,
   INodeExecutionData,
   INodeType,
@@ -77,7 +78,7 @@ export class Backchannel implements INodeType {
         name: 'actor',
         type: 'string',
         default: 'n8n-worker',
-        description: 'Worker identity used when claiming or acking. The node will create the actor on first use.',
+        description: 'Worker identity used when claiming or acking. Resolved (and created if new) by name, scoped to your API key.',
         displayOptions: { show: { operation: ['claimTask', 'ack'] } },
       },
       {
@@ -116,8 +117,8 @@ export class Backchannel implements INodeType {
     const callApi = async (
       method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
       path: string,
-      body?: Record<string, unknown>,
-      qs?: Record<string, unknown>,
+      body?: IDataObject,
+      qs?: IDataObject,
     ): Promise<any> => {
       const idemKey = `n8n-${this.getExecutionId()}-${method}-${path}`;
       return this.helpers.httpRequestWithAuthentication.call(this, 'backchannelApi', {
@@ -136,19 +137,6 @@ export class Backchannel implements INodeType {
         return created.id || name;
       } catch (err: any) {
         if (err.httpCode === 409) return name; // exists
-        throw err;
-      }
-    };
-
-    const ensureActor = async (name: string): Promise<string> => {
-      try {
-        const created = await callApi('POST', '/v1/actors', { name });
-        return created.id;
-      } catch (err: any) {
-        if (err.httpCode === 409) {
-          const got = await callApi('GET', `/v1/actors/${encodeURIComponent(name)}`);
-          return got.id;
-        }
         throw err;
       }
     };
@@ -179,18 +167,19 @@ export class Backchannel implements INodeType {
         } else if (operation === 'claimTask') {
           const channel = this.getNodeParameter('channel', i) as string;
           const actor = this.getNodeParameter('actor', i) as string;
-          const actorId = await ensureActor(actor);
+          // Let the server return only unclaimed messages; the actor name is
+          // resolved (and created if new) owner-scoped by the claim endpoint.
           const page = await callApi('GET', `/v1/channels/${encodeURIComponent(channel)}/messages`, undefined, {
             limit: 20,
+            status: 'unclaimed',
           });
           let claimed: any = null;
           for (const msg of page.data || []) {
-            if (msg.status === 'claimed' || msg.acknowledged_by?.length) continue;
             try {
-              claimed = await callApi('POST', `/v1/messages/${msg.id}/claim`, { actor: actorId });
+              claimed = await callApi('POST', `/v1/messages/${msg.id}/claim`, { actor });
               break;
             } catch (err: any) {
-              if (err.httpCode === 409) continue; // someone else
+              if (err.httpCode === 409) continue; // raced — someone else claimed it
               throw err;
             }
           }
@@ -199,15 +188,14 @@ export class Backchannel implements INodeType {
           const channel = this.getNodeParameter('channel', i) as string;
           const since = this.getNodeParameter('since', i, '') as string;
           const limit = this.getNodeParameter('limit', i, 50) as number;
-          const qs: Record<string, unknown> = { limit };
+          const qs: IDataObject = { limit };
           if (since) qs.since = since;
           const page = await callApi('GET', `/v1/channels/${encodeURIComponent(channel)}/messages`, undefined, qs);
           out.push({ json: page });
         } else if (operation === 'ack') {
           const messageId = this.getNodeParameter('messageId', i) as string;
           const actor = this.getNodeParameter('actor', i) as string;
-          const actorId = await ensureActor(actor);
-          const r = await callApi('POST', `/v1/messages/${messageId}/ack`, { actor: actorId });
+          const r = await callApi('POST', `/v1/messages/${messageId}/ack`, { actor });
           out.push({ json: r });
         } else {
           throw new NodeOperationError(this.getNode(), `Unsupported operation: ${operation}`);
