@@ -254,7 +254,10 @@ def render_landing_page() -> str:
         box-shadow: 0 0 10px rgba(88, 255, 125, 0.72);
       }
       .quickstart {
-        margin-top: 20px;
+        margin-top: 40px;
+      }
+      .use-cases-wrap {
+        margin-top: 40px;
       }
       /* Curl cards */
       .curl-cards {
@@ -406,7 +409,7 @@ def render_landing_page() -> str:
       }
       /* Mode grid */
       .mode-grid {
-        margin-top: 24px;
+        margin-top: 40px;
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 20px;
@@ -436,7 +439,7 @@ def render_landing_page() -> str:
       }
       /* Info cards — horizontal at bottom */
       .info-cards {
-        margin-top: 24px;
+        margin-top: 40px;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 20px;
@@ -462,7 +465,7 @@ def render_landing_page() -> str:
       }
       /* Pricing */
       .pricing {
-        margin-top: 24px;
+        margin-top: 40px;
       }
       .pricing-header {
         font-family: var(--font-mono);
@@ -561,7 +564,6 @@ def render_landing_page() -> str:
         gap: 12px;
         flex-wrap: wrap;
       }
-      .quickstart { margin-top: 24px; }
       .mode p code {
         font-family: var(--font-mono);
         font-size: 0.84em;
@@ -763,15 +765,17 @@ def render_landing_page() -> str:
       </section>
 
       <section class="quickstart">
-        <div class="pricing-header">The MCP way — zero glue code</div>
-        <p style="margin:0 0 18px;color:#9bd6a0;font-size:0.92rem;max-width:680px;">
-          A queue makes two agents share infrastructure you both wire up.
-          Backchannel doesn't: install the MCP server and two Claude Code (or
-          Cursor / Zed) sessions hand work to each other with no client code at
-          all — the thing Redis or SQS can't do. On one machine both sessions
-          share an auto-minted key, so handoff-by-name just works; across
-          machines, share a key or discover the channel and request in.
-        </p>
+        <article class="panel mcp-intro">
+          <div class="pricing-header" style="margin-bottom:10px;">The MCP way — zero glue code</div>
+          <p style="margin:0;color:#9bd6a0;font-size:0.92rem;max-width:680px;">
+            A queue makes two agents share infrastructure you both wire up.
+            Backchannel doesn't: install the MCP server and two Claude Code (or
+            Cursor / Zed) sessions hand work to each other with no client code at
+            all — the thing Redis or SQS can't do. On one machine both sessions
+            share an auto-minted key, so handoff-by-name just works; across
+            machines, share a key or discover the channel and request in.
+          </p>
+        </article>
         <div class="curl-cards">
             <div class="curl-card">
               <span class="curl-card-num">1</span>
