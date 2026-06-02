@@ -61,6 +61,31 @@ def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
 
 
+def _base_url_advisory(base_url: str, host: str) -> str | None:
+    """Warn when the advertised base URL is still a localhost default while the
+    server is publicly bound.
+
+    ``base_url`` is what agents are told to connect to (OpenAPI ``servers`` +
+    ai-manifest.json). If it points at localhost but the socket is bound to all
+    interfaces (the Docker default, ``--host 0.0.0.0``), an agent that fetches
+    the manifest from outside will be handed an unreachable address. That fails
+    silently — discovery "works", the returned URL just doesn't. Surface it.
+    Returns the warning text, or ``None`` when nothing looks wrong.
+    """
+    publicly_bound = host in ("0.0.0.0", "::")
+    looks_local = (not base_url) or "localhost" in base_url or "127.0.0.1" in base_url
+    if publicly_bound and looks_local:
+        shown = base_url or "(unset)"
+        return (
+            f"WARNING: advertising base_url={shown} while bound to {host}. Agents "
+            "that fetch /openapi.json or ai-manifest.json will be told to connect "
+            "to that address. For anything but local testing, set "
+            "BACKCHANNEL_BASE_URL to your public URL "
+            "(e.g. BACKCHANNEL_BASE_URL=https://bus.example.com)."
+        )
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backchannel service")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -234,8 +259,16 @@ def main() -> int:
 
     _install_signal_handlers()
     app = create_app(db_path=Path(args.db))
+    advertised = os.environ.get("BACKCHANNEL_BASE_URL", "")
     with make_server(args.host, args.port, app, server_class=ThreadingWSGIServer) as server:
         print(f"Backchannel listening on http://{args.host}:{args.port}", flush=True)
+        print(
+            f"advertising base_url={advertised or '(unset → agent docs fall back to the public instance)'}",
+            flush=True,
+        )
+        advisory = _base_url_advisory(advertised, args.host)
+        if advisory:
+            print(advisory, flush=True)
         # Run serve_forever in a thread so the main thread can wait on
         # the shutdown event. On SIGTERM we ask the server to stop
         # accepting new connections; in-flight requests finish on their
