@@ -4,6 +4,8 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -157,6 +159,30 @@ class BackchannelStore:
         self.db_path = str(db_path)
         self.now_provider = now_provider or utc_now
         self._init_db()
+        # Long-poll: in-process notifier so a waiting listMessages wakes the
+        # instant createMessage commits, without server-side DB polling. Opt-in
+        # and capped, because each waiter holds a server thread.
+        self._longpoll_enabled = os.environ.get("BACKCHANNEL_LONGPOLL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            self._longpoll_max_wait = float(os.environ.get("BACKCHANNEL_LONGPOLL_MAX_WAIT_SECONDS", "25"))
+        except ValueError:
+            self._longpoll_max_wait = 25.0
+        try:
+            _max_waiters = int(os.environ.get("BACKCHANNEL_LONGPOLL_MAX_WAITERS", "64"))
+        except ValueError:
+            _max_waiters = 64
+        self._longpoll_max_waiters = max(1, _max_waiters)
+        self._msg_condition = threading.Condition()
+        self._channel_versions: dict[str, int] = {}
+        self._longpoll_sem = threading.BoundedSemaphore(self._longpoll_max_waiters)
+
+    def _signal_new_message(self, channel_id: str) -> None:
+        """Bump the channel's version and wake any long-poll waiters."""
+        if not self._longpoll_enabled:
+            return
+        with self._msg_condition:
+            self._channel_versions[channel_id] = self._channel_versions.get(channel_id, 0) + 1
+            self._msg_condition.notify_all()
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -1052,6 +1078,9 @@ class BackchannelStore:
             message = self._get_message(conn, message_id)
             envelope = MessageEnvelope(message=self._serialize_message(conn, message), cursor=created_at)
 
+        # Wake long-poll waiters now that the write is committed.
+        self._signal_new_message(channel["id"])
+
         webhook_url = channel["webhook_url"] if "webhook_url" in channel.keys() else None
         if webhook_url:
             webhook_secret = channel["webhook_secret"] if "webhook_secret" in channel.keys() else None
@@ -1151,7 +1180,41 @@ class BackchannelStore:
             conn.execute("DELETE FROM agent_webhooks WHERE actor_id = ?", (actor_id,))
             conn.commit()
 
-    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
+    def _query_messages(self, conn: sqlite3.Connection, channel_id: str, since: str | None, page_size: int, status: str | None, expiring_before: str | None) -> dict[str, Any]:
+        now = to_timestamp(self.now())
+        params: list[Any] = [channel_id, now]
+        extra_clauses = ""
+        since_dt = parse_timestamp_or_none(since)
+        if since_dt is not None:
+            extra_clauses += " AND created_at > ?"
+            params.append(to_timestamp(since_dt))
+        if status == "unclaimed":
+            extra_clauses += " AND claimed_by_actor_id IS NULL"
+        elif status == "claimed":
+            extra_clauses += " AND claimed_by_actor_id IS NOT NULL"
+        if expiring_before:
+            expiring_dt = parse_timestamp_or_none(expiring_before)
+            if expiring_dt is not None:
+                extra_clauses += " AND expires_at < ?"
+                params.append(to_timestamp(expiring_dt))
+        params.append(page_size)
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM messages
+            WHERE channel_id = ?
+              AND expires_at > ?
+              {extra_clauses}
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        items = [self._serialize_message(conn, row) for row in rows]
+        next_cursor = items[-1]["created_at"] if items else since
+        return {"data": items, "limit": page_size, "next_cursor": next_cursor}
+
+    def list_messages(self, channel_identifier: str, since: str | None, limit: int | None, key_id: str, team_id: str | None = None, status: str | None = None, expiring_before: str | None = None, owner_id: str | None = None, wait: float | None = None) -> dict[str, Any]:
         page_size = 50 if limit is None else limit
         if page_size < 1 or page_size > 100:
             raise APIError(422, "invalid_limit", "limit must be between 1 and 100")
@@ -1160,43 +1223,36 @@ class BackchannelStore:
 
         with self.connect() as conn:
             channel = self._resolve_channel(conn, channel_identifier, key_id=key_id, team_id=team_id, owner_id=owner_id)
-            now = to_timestamp(self.now())
-            params: list[Any] = [channel["id"], now]
-            extra_clauses = ""
-            since_dt = parse_timestamp_or_none(since)
-            if since_dt is not None:
-                extra_clauses += " AND created_at > ?"
-                params.append(to_timestamp(since_dt))
-            if status == "unclaimed":
-                extra_clauses += " AND claimed_by_actor_id IS NULL"
-            elif status == "claimed":
-                extra_clauses += " AND claimed_by_actor_id IS NOT NULL"
-            if expiring_before:
-                expiring_dt = parse_timestamp_or_none(expiring_before)
-                if expiring_dt is not None:
-                    extra_clauses += " AND expires_at < ?"
-                    params.append(to_timestamp(expiring_dt))
-            params.append(page_size)
-            rows = conn.execute(
-                f"""
-                SELECT *
-                FROM messages
-                WHERE channel_id = ?
-                  AND expires_at > ?
-                  {extra_clauses}
-                ORDER BY created_at ASC
-                LIMIT ?
-                """,
-                params,
-            ).fetchall()
+            channel_id = channel["id"]
+            # Capture the channel version BEFORE the query so a message posted
+            # during the query or the wait can never be missed (no lost wakeup).
+            with self._msg_condition:
+                seen = self._channel_versions.get(channel_id, 0)
+            result = self._query_messages(conn, channel_id, since, page_size, status, expiring_before)
 
-            items = [self._serialize_message(conn, row) for row in rows]
-            next_cursor = items[-1]["created_at"] if items else since
-            return {
-                "data": items,
-                "limit": page_size,
-                "next_cursor": next_cursor,
-            }
+        # Long-poll: if enabled and the caller asked to wait and there's nothing
+        # yet, block until a new message arrives or the (capped) wait elapses.
+        try:
+            wait_s = min(float(wait), self._longpoll_max_wait) if (self._longpoll_enabled and wait is not None) else 0.0
+        except (TypeError, ValueError):
+            wait_s = 0.0
+        if wait_s <= 0 or result["data"]:
+            return result
+        if not self._longpoll_sem.acquire(blocking=False):
+            return result  # at waiter capacity → return immediately (graceful degrade)
+        try:
+            deadline = time.monotonic() + wait_s
+            with self._msg_condition:
+                while self._channel_versions.get(channel_id, 0) == seen:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._msg_condition.wait(timeout=remaining)
+            with self.connect() as conn:
+                result = self._query_messages(conn, channel_id, since, page_size, status, expiring_before)
+        finally:
+            self._longpoll_sem.release()
+        return result
 
     def list_channel_history(self, channel_identifier: str, cursor: str | None, limit: int | None, key_id: str, team_id: str | None = None) -> dict[str, Any]:
         """Return archived (expired-then-cleaned-up) messages for a channel,

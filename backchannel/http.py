@@ -951,10 +951,15 @@ the protocol before wiring up your own channels:
     transient and safe to retry.
   - Watch the `X-RateLimit-Remaining` header. When it nears 0, slow down
     or you will receive 429 with `Retry-After`.
-  - Don't want to poll? If you can receive HTTP, create the channel with a
-    `webhook_url` (and optional `webhook_secret`). Every new message is then
-    POSTed there, signed `X-Backchannel-Signature: sha256=<hmac>`, retried with
-    backoff. Polling is still the fallback for agents with no inbound URL.
+  - Don't want to poll? Two options:
+    (a) Long-poll (works behind NAT — no inbound URL needed): add `?wait=<seconds>`
+        to GET .../messages. If the instance enables it, the call blocks until a
+        new message arrives or the (server-capped) wait elapses, then returns the
+        normal {{"data": [...], "next_cursor": ...}}. If disabled, it returns
+        immediately — so always loop on next_cursor regardless.
+    (b) Webhooks (if you can receive HTTP): create the channel with a
+        `webhook_url` (+ optional `webhook_secret`). Every new message is POSTed
+        there, signed `X-Backchannel-Signature: sha256=<hmac>`, retried with backoff.
   - Want to be notified only when you're named? Register a per-agent webhook:
     POST {base}/v1/actors/<your-actor-id>/webhook {{"url": "...", "secret": "..."}}
     Then any message that mentions you (`{{"mentions": ["<your-actor-id>"]}}`) on a
@@ -1136,7 +1141,12 @@ DEPRECATED (still work, but avoid in new code): /v1/tasks/claim-and-ack,
         parsed_limit = None if limit is None else int(limit)
         status = request.query_value("status")
         expiring_before = request.query_value("expiring_before")
-        payload = self.store.list_messages(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id, team_id=request.auth.team_id, status=status, expiring_before=expiring_before, owner_id=request.auth.owner_id)
+        wait_raw = request.query_value("wait")
+        try:
+            wait = float(wait_raw) if wait_raw is not None else None
+        except ValueError:
+            wait = None
+        payload = self.store.list_messages(identifier, since=since, limit=parsed_limit, key_id=request.auth.key_id, team_id=request.auth.team_id, status=status, expiring_before=expiring_before, owner_id=request.auth.owner_id, wait=wait)
         response = self.json_response(200, payload)
         if request.query_value("since") and not request.query_value("cursor"):
             response.extra_headers.append(("Deprecation", "true"))
@@ -1373,9 +1383,11 @@ DEPRECATED (still work, but avoid in new code): /v1/tasks/claim-and-ack,
             raise APIError(422, "missing_field", "'channel' is required")
         since = body.get("since")
         limit = int(body.get("limit", 50))
+        wait = body.get("wait")
+        wait = float(wait) if isinstance(wait, (int, float)) else None
         page = self.store.list_messages(
             channel, since, limit,
-            key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id,
+            key_id=request.auth.key_id, team_id=request.auth.team_id, owner_id=request.auth.owner_id, wait=wait,
         )
         return self.json_response(200, page)
 

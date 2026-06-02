@@ -619,6 +619,7 @@ def build_openapi_spec(onboarding_url: str | None = "", base_url: str = "") -> d
                         {"name": "identifier", "in": "path", "required": True, "schema": {"type": "string"}},
                         {"name": "since", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Return messages created after this timestamp (cursor)"},
                         {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+                        {"name": "wait", "in": "query", "schema": {"type": "number"}, "description": "Long-poll: if the instance enables it and there are no new messages, block up to this many seconds (server-capped) until one arrives, then return. Omit/0 = return immediately (always-on default). Disabled instances ignore it."},
                     ],
                     "responses": {
                         "200": {

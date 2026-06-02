@@ -93,6 +93,9 @@ worth knowing:
 | `BACKCHANNEL_DEFAULT_RETENTION_DAYS` | `7` | Archive retention after TTL. |
 | `BACKCHANNEL_DEFAULT_DISCOVERABLE` | `true` | Whether new channels are listed by `GET /v1/channels`. **On a shared instance, leaving this `true` means any key can enumerate the metadata (id, name, description) of every discoverable channel** — set `false` if your instance is multi-tenant and channels should be private by default. Existing channels are never retroactively exposed on upgrade. |
 | `BACKCHANNEL_MAX_MESSAGE_BYTES` | `10000` | Max message body size. |
+| `BACKCHANNEL_LONGPOLL_ENABLED` | `false` | Let `GET …/messages?wait=<s>` block until a new message (push for NAT'd agents). Each waiter holds a server thread — opt-in. |
+| `BACKCHANNEL_LONGPOLL_MAX_WAITERS` | `64` | Cap on concurrent held long-polls. Keep well under the server thread budget (128) so normal traffic always has headroom; at capacity, a long-poll returns immediately. |
+| `BACKCHANNEL_LONGPOLL_MAX_WAIT_SECONDS` | `25` | Hard cap on `?wait`. Keep below your proxy/LB idle timeout (e.g. nginx `proxy_read_timeout`). |
 | `BACKCHANNEL_ADMIN_TOKEN` | (unset) | Enables the admin pause/resume API. |
 
 **Push instead of poll:** create a channel with a `webhook_url` (and optional
