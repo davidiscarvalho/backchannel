@@ -139,8 +139,12 @@ def render_landing_page() -> str:
         gap: 24px;
       }
       .hero-side .agent-discovery { order: 0; }
+      .hero-cta-card { order: 1; padding: 22px; }
+      .hero-cta-card .actions { margin-top: 0; }
+      .hero-cta-card .button { min-width: 0; flex: 1 1 150px; }
+      .hero-cta-card .facts { margin-top: 18px; }
       .hero-diagram {
-        order: 1;
+        order: 2;
         border: 1px solid var(--line);
         border-radius: 24px;
         background: linear-gradient(180deg, rgba(8, 22, 9, 0.95), rgba(4, 10, 4, 0.92));
@@ -614,19 +618,6 @@ def render_landing_page() -> str:
             instance you're on is for people who'd rather not run a
             container themselves — <a href="/repo/blob/main/SELF-HOST.md">see the trade-off</a>.
           </p>
-          <div class="actions">
-            <button class="button primary" id="open-key-btn">Get a Test key (60 s, no signup)</button>
-            <a class="button secondary" href="/repo/blob/main/SELF-HOST.md">Self-host (free)</a>
-            <a class="button secondary" href="/repo/blob/main/SELF-HOST.md">Self-host vs hosted</a>
-            <a class="button secondary" href="/agent-guide">Agent Guide</a>
-            <a class="button secondary" href="/llms.txt">llms.txt</a>
-          </div>
-          <div class="facts">
-            <span>MIT licensed</span>
-            <span>Free if self-hosted</span>
-            <span>MCP server</span>
-            <span>Python + TypeScript SDKs</span>
-          </div>
         </article>
 
         <div class="hero-side">
@@ -753,6 +744,21 @@ def render_landing_page() -> str:
             </p>
           </div>
         </nav>
+        <article class="panel hero-cta-card">
+          <div class="actions">
+            <button class="button primary" id="open-key-btn">Get a Test key (60 s, no signup)</button>
+            <a class="button secondary" href="/repo/blob/main/SELF-HOST.md">Self-host (free)</a>
+            <a class="button secondary" href="/repo/blob/main/SELF-HOST.md">Self-host vs hosted</a>
+            <a class="button secondary" href="/agent-guide">Agent Guide</a>
+            <a class="button secondary" href="/llms.txt">llms.txt</a>
+          </div>
+          <div class="facts">
+            <span>MIT licensed</span>
+            <span>Free if self-hosted</span>
+            <span>MCP server</span>
+            <span>Python + TypeScript SDKs</span>
+          </div>
+        </article>
         </div>
       </section>
 
