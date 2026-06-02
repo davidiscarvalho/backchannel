@@ -138,11 +138,21 @@ class BackchannelApp:
             limit=10,
             window_seconds=60,
             now_provider=self.store.now,
+            message="Invitation lookup rate limit exceeded",
         )
+        # Key-mint cap is operator-tunable: a self-host with its own abuse
+        # controls may want it higher (or off). 0 disables the cap.
+        mint_limit = int(os.environ.get("BACKCHANNEL_KEY_MINT_LIMIT", "5"))
+        mint_window = int(os.environ.get("BACKCHANNEL_KEY_MINT_WINDOW", "3600"))
         self.key_issuance_rate_limiter = SlidingWindowRateLimiter(
-            limit=5,
-            window_seconds=3600,
+            limit=mint_limit if mint_limit > 0 else 1_000_000_000,
+            window_seconds=mint_window,
             now_provider=self.store.now,
+            message=(
+                f"Key issuance rate limit exceeded: {mint_limit} new keys per "
+                f"{mint_window}s from one source. Self-host to raise it "
+                "(BACKCHANNEL_KEY_MINT_LIMIT)."
+            ),
         )
         # Enforcing per-key request limiter.
         self.api_rate_tracker = SlidingWindowRateLimiter(
