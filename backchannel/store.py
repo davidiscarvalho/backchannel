@@ -185,10 +185,16 @@ class BackchannelStore:
             self._msg_condition.notify_all()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        # busy_timeout makes a writer wait (rather than immediately raising
+        # SQLITE_BUSY) when the single writer is briefly held — cheap insurance
+        # on slow/networked disks. Python's connect() defaults this to 5s; we
+        # set it explicitly and make it tunable for self-hosters on slower I/O.
+        busy_timeout_ms = int(os.environ.get("BACKCHANNEL_SQLITE_BUSY_TIMEOUT_MS", "5000"))
+        connection = sqlite3.connect(self.db_path, timeout=max(0.0, busy_timeout_ms / 1000.0))
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
         return connection
 
     def now(self) -> datetime:
