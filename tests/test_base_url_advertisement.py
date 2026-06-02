@@ -70,6 +70,25 @@ class BaseUrlAdvertisementTests(unittest.TestCase):
         self.assertIn("real.example.com", body)
         self.assertNotIn("attacker.example", body)
 
+    def test_allowed_hosts_rejects_spoofed_host(self):
+        # N1: with ALLOWED_HOSTS set and BASE_URL unset, a Host not on the list
+        # must not be echoed into discovery URLs — the canonical first allowed
+        # host is advertised instead.
+        with mock.patch.dict(os.environ, {"BACKCHANNEL_ALLOWED_HOSTS": "bus.example.com, alt.example.com"}):
+            os.environ.pop("BACKCHANNEL_BASE_URL", None)
+            app = create_app(db_path=self.db)
+        body = _get(app, "/ai-manifest.json", {"HTTP_HOST": "evil.example.com"})
+        self.assertNotIn("evil.example.com", body, "spoofed Host must not be advertised")
+        self.assertIn("bus.example.com", body, "canonical first allowed host should be used")
+
+    def test_allowed_hosts_permits_listed_host_with_port(self):
+        with mock.patch.dict(os.environ, {"BACKCHANNEL_ALLOWED_HOSTS": "bus.example.com"}):
+            os.environ.pop("BACKCHANNEL_BASE_URL", None)
+            app = create_app(db_path=self.db)
+        body = _get(app, "/ai-manifest.json", {"HTTP_HOST": "bus.example.com:8443"})
+        # hostname matches the allowlist => the full host (with port) is advertised
+        self.assertIn("bus.example.com:8443", body)
+
 
 if __name__ == "__main__":
     unittest.main()

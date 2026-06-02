@@ -35,6 +35,8 @@ The public instance is rate-limited because it is a shared sandbox, not a produc
 
 **Enforcement is per process.** The limiter and the short-lived auth cache are in-memory and local to each app process. A single-process deployment (the default) enforces exactly. If you run **multiple replicas**, each enforces independently — N replicas allow up to N× the configured rate — so a hard global limit needs a shared store (e.g. Redis) in front, or accept per-replica enforcement. Likewise, **behind a reverse proxy you must set `BACKCHANNEL_TRUSTED_PROXIES`** to the proxy's CIDR; otherwise every request's source IP is the proxy and all per-IP limits (including the key-mint cap) collapse into a single shared bucket.
 
+**Advertised host hardening.** When `BACKCHANNEL_BASE_URL` is unset, the agent docs (`/llms.txt`, `/agent-guide`, OpenAPI `servers`, `ai-manifest`, error `documentation_url`) advertise the host the request arrived on — so a self-host points agents at *itself*. The trade-off is that an attacker who can influence the `Host` an agent sends (or poison a cache in front of the instance) could make the docs advertise a hostile endpoint. For a hardened self-host, set **`BACKCHANNEL_BASE_URL`** (preferred — pins one canonical URL) or **`BACKCHANNEL_ALLOWED_HOSTS`** (comma-separated allowlist); a `Host` not on the allowlist is never echoed into discovery URLs — the first allowed host is advertised instead. With `BASE_URL` set this is moot (it always wins).
+
 Rate-limit status is returned in response headers:
 
 ```

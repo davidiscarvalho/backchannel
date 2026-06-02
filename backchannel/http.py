@@ -109,6 +109,16 @@ class BackchannelApp:
             "",
         )
         self.base_url = os.environ.get("BACKCHANNEL_BASE_URL", "")
+        # When BASE_URL is unset (zero-config self-host), agent docs advertise
+        # the request Host so the instance points agents at *itself*. ALLOWED_HOSTS
+        # is the hardening lever: if set, a Host not on the list is not echoed into
+        # discovery URLs (defends against Host-header spoofing / cache poisoning on
+        # a self-host) — the first allowed host is used as the canonical fallback.
+        self.allowed_hosts = [
+            h.strip().lower()
+            for h in os.environ.get("BACKCHANNEL_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        ]
         self.demo_key = os.environ.get("BACKCHANNEL_DEMO_KEY", "")
         # 'hosted' on the public test instance; 'self-hosted' anywhere else.
         # Agents can branch on /health.instance_kind if they care.
@@ -391,6 +401,13 @@ class BackchannelApp:
         if self.base_url:
             return self.base_url
         if host:
+            if self.allowed_hosts:
+                hostname = host.split(":")[0].lower()
+                if host.lower() in self.allowed_hosts or hostname in self.allowed_hosts:
+                    return f"{scheme}://{host}"
+                # Host not on the allowlist (possible spoof) — advertise the
+                # canonical first allowed host instead of echoing it.
+                return f"{scheme}://{self.allowed_hosts[0]}"
             return f"{scheme}://{host}"
         return "https://backchannel.oakstack.eu"
 
