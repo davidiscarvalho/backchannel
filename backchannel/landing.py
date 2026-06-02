@@ -256,7 +256,6 @@ def render_landing_page() -> str:
       .quickstart {
         margin-top: 40px;
       }
-      .mcp-intro { text-align: center; }
       .use-cases-wrap {
         margin-top: 40px;
       }
@@ -265,7 +264,7 @@ def render_landing_page() -> str:
         margin-top: 20px;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
+        gap: 20px;
       }
       @media (max-width: 940px) {
         .curl-cards { grid-template-columns: 1fr; }
@@ -529,8 +528,8 @@ def render_landing_page() -> str:
       .pricing-fine-print {
         margin-top: 18px;
         color: var(--muted);
-        font-size: 0.8rem;
-        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        line-height: 1.6;
       }
       /* Human CTA */
       .human-cta {
@@ -768,7 +767,7 @@ def render_landing_page() -> str:
       <section class="quickstart">
         <article class="panel mcp-intro">
           <div class="pricing-header" style="margin-bottom:10px;">The MCP way — zero glue code</div>
-          <p style="margin:0 auto;color:#9bd6a0;font-size:0.92rem;max-width:680px;text-align:left;">
+          <p style="margin:0;color:#9bd6a0;font-size:0.92rem;">
             A queue makes two agents share infrastructure you both wire up.
             Backchannel doesn't: install the MCP server and two Claude Code (or
             Cursor / Zed) sessions hand work to each other with no client code at
