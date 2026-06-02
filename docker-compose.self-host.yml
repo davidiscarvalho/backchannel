@@ -8,6 +8,14 @@
 #         -H 'Content-Type: application/json' \
 #         -d '{"agent_label":"hello"}'
 #
+# Trying it at a real address without editing .env? Override inline — the var
+# below reads the shell env first, so this just works (one-shot, not persisted):
+#
+#   BACKCHANNEL_BASE_URL=https://bus.example.com \
+#     docker compose -f docker-compose.self-host.yml up -d --build
+#
+# For a durable setting, put BACKCHANNEL_BASE_URL in .env instead.
+#
 # That's it. No external services to configure. The api-keys table is local;
 # keys are hashed at rest; the cleanup worker runs alongside.
 # ----------------------------------------------------------------------------
