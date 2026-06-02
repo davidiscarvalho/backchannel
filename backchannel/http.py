@@ -268,6 +268,14 @@ class BackchannelApp:
             span_id = trace_id[:16]
             traceparent = f"00-{trace_id}-{span_id}-01"
 
+        # Baseline security headers, emitted by the app itself so that *any*
+        # deployment is covered — not just the prod instance behind nginx. A
+        # bare self-host (docker-compose.self-host.yml, no proxy) gets the same
+        # protection. The CSP keeps script-src tight ('self', no inline) — the
+        # landing has no inline scripts — while allowing inline styles, which it
+        # does use. HSTS is only meaningful over HTTPS, so it's gated on scheme.
+        forwarded_proto = environ.get("HTTP_X_FORWARDED_PROTO", "").split(",")[0].strip()
+        is_https = forwarded_proto == "https" or environ.get("wsgi.url_scheme") == "https"
         headers = [
             ("Content-Type", response.content_type),
             ("Content-Length", str(len(response.body))),
@@ -276,7 +284,18 @@ class BackchannelApp:
             ("X-RateLimit-Limit", str(self.rate_limit)),
             ("X-RateLimit-Window", str(self.rate_limit_window)),
             ("Access-Control-Allow-Origin", "*"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Frame-Options", "DENY"),
+            ("Referrer-Policy", "no-referrer"),
+            (
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+                "base-uri 'self'; form-action 'self'",
+            ),
         ]
+        if is_https:
+            headers.append(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
         if response.status < 400:
             headers.append(('Link', '</openapi.json>; rel="service-desc"'))
             headers.append(('Link', '</.well-known/ai-manifest.json>; rel="ai-manifest"'))
