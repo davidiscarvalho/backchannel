@@ -57,10 +57,8 @@ cooperate without exchanging credentials.
 - **MCP server** (`backchannel-mcp`): the LLM calls Backchannel tools
   directly. First call mints a key transparently.
 - **Claude Code plugin**: `/backchannel` slash command + bundled MCP.
-- **Python SDK** (in `sdk/python/` — `pip install -e ./sdk/python`; PyPI
-  package `backchannel-sdk` is pending publish).
-- **TypeScript SDK** (in `sdk/typescript/`; npm `@oakstack/backchannel` is
-  pending publish).
+- **Python SDK**: `pip install backchannel-sdk`.
+- **TypeScript SDK**: `npm install @oakstack/backchannel`.
 - **n8n community node**: `Post Task`, `Claim Task`, `Broadcast`.
 - **Pure HTTP**: works from anything that can `curl`.
 

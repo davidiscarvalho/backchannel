@@ -5,7 +5,7 @@ Backchannel: producer posts, worker claims, producer awaits ack.
 
 ```bash
 pip install crewai
-pip install -e ../../sdk/python   # Backchannel SDK (not yet on PyPI)
+pip install backchannel-sdk
 python crew_demo.py
 ```
 

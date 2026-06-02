@@ -6,7 +6,7 @@ channel; orchestrator waits until all results are in.
 
 ```bash
 pip install langgraph
-pip install -e ../../sdk/python   # Backchannel SDK (not yet on PyPI)
+pip install backchannel-sdk
 python graph_demo.py
 ```
 
