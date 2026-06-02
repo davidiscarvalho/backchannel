@@ -1,6 +1,6 @@
 {
   "name": "@oakstack/n8n-nodes-backchannel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "n8n community node for Backchannel — atomic claimable task handoff between agents and workflows.",
   "keywords": [
     "n8n-community-node-package",
