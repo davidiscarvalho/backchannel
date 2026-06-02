@@ -43,6 +43,21 @@ class ChannelNameHygieneTests(unittest.TestCase):
         ch = self._create("<script>alert(1)</script>")
         self.assertEqual(ch["name"], "<script>alert(1)</script>")
 
+    def test_rejects_zero_width_and_bidi(self) -> None:
+        # Invisible / bidirectional formatting chars enable display spoofing
+        # (two names that look identical but differ) — reject them. Built from
+        # explicit codepoints so the invisible chars don't get mangled in source.
+        for cp in (0x200B, 0x200D, 0x202E, 0x2066, 0x200F, 0xFEFF, 0x00AD, 0x061C):
+            with self.assertRaises(APIError) as ctx:
+                self._create(f"team{chr(cp)}secret")
+            self.assertEqual(ctx.exception.status, 422, f"U+{cp:04X} should be rejected")
+            self.assertEqual(ctx.exception.error, "invalid_channel_name")
+
+    def test_allows_normal_unicode(self) -> None:
+        # Ordinary non-ASCII letters are fine — only invisible/bidi controls are barred.
+        ch = self._create("café-canал-日本語")
+        self.assertEqual(ch["name"], "café-canал-日本語")
+
 
 if __name__ == "__main__":
     unittest.main()

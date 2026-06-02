@@ -2571,16 +2571,40 @@ class BackchannelStore:
             raise APIError(422, "invalid_string", f"'{field}' must be a non-empty string")
         return value.strip()
 
+    # Invisible / bidirectional formatting characters that have no place in a
+    # channel identifier: zero-width spaces & joiners, word/BOM joiners, and the
+    # bidi marks / embeddings / overrides / isolates. They let two visually
+    # identical names differ (display spoofing / "Trojan-source"-style tricks),
+    # so we reject them alongside C0/C1 control characters.
+    _DISALLOWED_NAME_CHARS = frozenset(
+        chr(cp)
+        for cp in (
+            0x00AD,  # soft hyphen
+            0x061C,  # Arabic letter mark
+            0x200B, 0x200C, 0x200D,  # ZWSP, ZWNJ, ZWJ
+            0x200E, 0x200F,  # LRM, RLM
+            0x202A, 0x202B, 0x202C, 0x202D, 0x202E,  # LRE, RLE, PDF, LRO, RLO
+            0x2060, 0x2061, 0x2062, 0x2063, 0x2064,  # word joiner + invisible math ops
+            0x2066, 0x2067, 0x2068, 0x2069,  # LRI, RLI, FSI, PDI
+            0xFEFF,  # BOM / zero-width no-break space
+        )
+    )
+
     def _clean_channel_name(self, name: str) -> str:
-        """Reject control/null bytes in channel names and cap length.
+        """Reject control/null bytes and invisible/bidi formatting in channel
+        names, and cap length.
 
         HTML escaping is the render layer's job (so '<', '>' are allowed), but
-        control characters (incl. NUL, newlines, DEL) have no place in a
-        single-line channel identifier and are a defense-in-depth hazard on a
-        bare self-host console without a CSP.
+        control characters (incl. NUL, newlines, DEL) and invisible/bidirectional
+        formatting characters have no place in a single-line channel identifier:
+        they're a defense-in-depth hazard on a bare self-host console without a
+        CSP, and a display-spoofing vector (two names that look identical but
+        aren't).
         """
         if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
             raise APIError(422, "invalid_channel_name", "Channel name must not contain control characters")
+        if any(ch in self._DISALLOWED_NAME_CHARS for ch in name):
+            raise APIError(422, "invalid_channel_name", "Channel name must not contain invisible or bidirectional formatting characters")
         if len(name) > 200:
             raise APIError(422, "invalid_channel_name", "Channel name must be at most 200 characters")
         return name
