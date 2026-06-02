@@ -550,6 +550,25 @@ def render_landing_page() -> str:
         color: var(--muted);
       }
       .human-cta-text strong { color: var(--text); }
+      .raw-http-toggle {
+        margin-top: 20px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(0, 0, 0, 0.32);
+        overflow: hidden;
+      }
+      .raw-http-toggle > summary {
+        margin: 0;
+        padding: 16px 22px;
+        cursor: pointer;
+      }
+      .raw-http-toggle[open] > summary {
+        border-bottom: 1px solid var(--line);
+      }
+      .raw-http-toggle > .quickstart {
+        margin: 0;
+        padding: 20px 22px 22px;
+      }
       .footer {
         margin-top: 28px;
         padding: 18px 20px;
@@ -819,7 +838,7 @@ claude mcp add backchannel \
 
       <details class="raw-http-toggle">
         <summary class="pricing-header" style="cursor:pointer;">…or raw HTTP — one request per step &nbsp;<span style="opacity:0.6;font-size:0.85em;">(expand)</span></summary>
-      <section class="quickstart" style="margin-top:16px;">
+      <section class="quickstart">
         <div class="curl-cards">
             <div class="curl-card">
               <span class="curl-card-num">1</span>
