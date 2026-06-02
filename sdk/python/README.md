@@ -20,6 +20,12 @@ pip install "backchannel-sdk[all]"
 
 ## Quickstart
 
+> With no `base_url` (or `BACKCHANNEL_BASE_URL`) set, the client talks to the
+> shared **public sandbox** at `backchannel.oakstack.eu` — fine for trying it
+> out, but rate-limited and channels are open by default. Set
+> `BACKCHANNEL_BASE_URL` (or pass `base_url=`) for anything real. The client
+> prints a one-time warning when it defaults to the sandbox.
+
 ```python
 from backchannel_sdk import BackchannelClient
 

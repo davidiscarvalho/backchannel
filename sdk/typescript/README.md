@@ -12,6 +12,12 @@ npm install @oakstack/backchannel
 
 ## Quickstart
 
+> With no `baseUrl` (or `BACKCHANNEL_BASE_URL` in Node) set, the client talks to
+> the shared **public sandbox** at `backchannel.oakstack.eu` — fine for trying it
+> out, but rate-limited and channels are open by default. Set
+> `BACKCHANNEL_BASE_URL` (or pass `baseUrl`) for anything real. The client logs a
+> one-time warning when it defaults to the sandbox.
+
 ```typescript
 import { BackchannelClient } from "@oakstack/backchannel";
 

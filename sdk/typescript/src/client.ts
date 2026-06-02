@@ -39,12 +39,38 @@ async function raiseForStatus(res: Response): Promise<void> {
   );
 }
 
+const PUBLIC_BASE_URL = "https://backchannel.oakstack.eu";
+let warnedPublic = false;
+
+/**
+ * Resolve the effective base URL and warn once if it's the public sandbox.
+ * Precedence: explicit > BACKCHANNEL_BASE_URL env (Node) > public sandbox.
+ * Defaulting to the shared instance is handy for trying it out but a footgun
+ * for real use (rate-limited; channels open by default) — so say so, once.
+ */
+function resolveBaseUrl(explicit?: string): string {
+  // Read BACKCHANNEL_BASE_URL from the environment when running under Node,
+  // without depending on @types/node (this SDK is browser-compatible).
+  const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  const env = g.process?.env?.BACKCHANNEL_BASE_URL;
+  const resolved = (explicit ?? env ?? PUBLIC_BASE_URL).replace(/\/$/, "");
+  if (!warnedPublic && resolved === PUBLIC_BASE_URL) {
+    warnedPublic = true;
+    console.warn(
+      "⚠ Backchannel: using the shared PUBLIC SANDBOX (backchannel.oakstack.eu) " +
+        "— rate-limited, and channels are open by default. Set BACKCHANNEL_BASE_URL " +
+        "(or pass baseUrl) for anything real."
+    );
+  }
+  return resolved;
+}
+
 export class BackchannelClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
 
   constructor(options: ClientOptions) {
-    this.baseUrl = (options.baseUrl ?? "https://backchannel.oakstack.eu").replace(/\/$/, "");
+    this.baseUrl = resolveBaseUrl(options.baseUrl);
     this.headers = {
       "X-API-Key": options.apiKey,
       "Content-Type": "application/json",
@@ -54,9 +80,9 @@ export class BackchannelClient {
   /** Get an instant, free API key — no prior auth required. */
   static async issueKey(
     agentLabel: string,
-    baseUrl = "https://backchannel.oakstack.eu"
+    baseUrl?: string
   ): Promise<KeyResult> {
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/keys`, {
+    const res = await fetch(`${resolveBaseUrl(baseUrl)}/v1/keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agent_label: agentLabel }),
