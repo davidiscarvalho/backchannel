@@ -136,10 +136,13 @@ class BackchannelClient:
         *,
         description: str | None = None,
         access: str = "open",
+        discoverable: bool | None = None,
         metadata_schema: dict[str, Any] | None = None,
         ttl_seconds: int | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"name": name, "mode": mode, "access": access}
+        if discoverable is not None:
+            body["discoverable"] = discoverable
         if description:
             body["description"] = description
         if metadata_schema:

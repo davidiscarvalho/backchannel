@@ -95,6 +95,28 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(any(c["id"] == ch["id"] for c in page["data"]))
 
+    def test_restricted_channel_is_private_by_default(self) -> None:
+        # No explicit discoverable + access=restricted => NOT enumerable by a
+        # non-member, even on an instance whose default is discoverable=true.
+        _, ch = self.request(
+            "POST", "/v1/channels",
+            {"name": "secret-room", "mode": "claimable", "access": "restricted"},
+        )
+        self.assertFalse(ch["discoverable"])
+        status, page = self.request("GET", "/v1/channels", api_key="key-b")
+        self.assertEqual(status, 200)
+        self.assertFalse(any(c["id"] == ch["id"] for c in page["data"]))
+
+    def test_restricted_channel_can_opt_into_discovery(self) -> None:
+        # Explicit discoverable=true still makes a findable request-to-join lobby.
+        _, ch = self.request(
+            "POST", "/v1/channels",
+            {"name": "open-lobby", "mode": "claimable", "access": "restricted", "discoverable": True},
+        )
+        self.assertTrue(ch["discoverable"])
+        status, page = self.request("GET", "/v1/channels", api_key="key-b")
+        self.assertTrue(any(c["id"] == ch["id"] for c in page["data"]))
+
     def test_access_request_on_open_channel_is_noop(self) -> None:
         _, ch = self.request("POST", "/v1/channels", {"name": "open-lane", "mode": "broadcast", "access": "open", "discoverable": True})
         status, result = self.request("POST", f"/v1/channels/{ch['id']}/access-requests", {}, api_key="key-b")

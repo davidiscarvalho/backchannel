@@ -345,7 +345,7 @@ def build_openapi_spec(onboarding_url: str | None = "", base_url: str = "") -> d
                                 "name": {"type": "string"},
                                 "mode": {"type": "string", "enum": ["broadcast", "claimable"]},
                                 "access": {"type": "string", "enum": ["open", "restricted"], "default": "open"},
-                                "discoverable": {"type": "boolean", "description": "Whether this channel is listed by GET /v1/channels. Default true (the public demo defaults to false)."},
+                                "discoverable": {"type": "boolean", "description": "Whether this channel is listed by GET /v1/channels. Open channels default to the instance setting (public demo: false). Restricted channels default to false regardless — set discoverable:true to make a findable request-to-join lobby."},
                                 "description": {"type": "string", "default": ""},
                                 "metadata_schema": {"type": "object", "default": {}},
                                 "pinned_message": {"type": ["string", "null"]},

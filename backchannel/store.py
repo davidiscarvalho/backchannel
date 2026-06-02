@@ -645,7 +645,12 @@ class BackchannelStore:
             raise APIError(422, "invalid_access", "Channel access must be 'open' or 'restricted'")
         raw_discoverable = payload.get("discoverable")
         if raw_discoverable is None:
-            discoverable = self._DEFAULT_DISCOVERABLE
+            # Restricted channels default to NON-discoverable: choosing
+            # "restricted" signals private intent, so the name/description must
+            # not be enumerable by non-members via GET /v1/channels unless the
+            # owner explicitly opts in (discoverable=true makes a findable
+            # request-to-join lobby). Open channels follow the instance default.
+            discoverable = False if access == "restricted" else self._DEFAULT_DISCOVERABLE
         elif isinstance(raw_discoverable, bool):
             discoverable = raw_discoverable
         else:

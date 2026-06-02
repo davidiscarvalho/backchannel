@@ -135,7 +135,9 @@ class MCPClientIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with make_client(self.app) as owner:
             owner_key = await owner.issue_key(agent_label="owner-1")
             owner.api_key = owner_key.key
-            channel = await owner.create_channel(name="incident-room", mode="claimable", access="restricted")
+            channel = await owner.create_channel(
+                name="incident-room", mode="claimable", access="restricted", discoverable=True
+            )
             cid = channel["id"]
             self.assertTrue(channel["discoverable"])
 

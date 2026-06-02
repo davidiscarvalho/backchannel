@@ -52,9 +52,12 @@ Returns:
 - `PATCH /v1/channels/{channel_or_alias}`
 - `POST /v1/channels/{channel_or_alias}/aliases`
 
-Channels carry a `discoverable` flag (default per `BACKCHANNEL_DEFAULT_DISCOVERABLE`;
-the public demo defaults it off). A `discoverable` + `restricted` channel is a
-findable "lobby": you can see it exists but must request access to read it.
+Channels carry a `discoverable` flag. Open channels default to
+`BACKCHANNEL_DEFAULT_DISCOVERABLE` (the public demo defaults it off). **Restricted
+channels default to non-discoverable regardless** — choosing `restricted` signals
+private intent, so the name/metadata are not enumerable unless you explicitly set
+`discoverable: true`, which makes a findable "lobby": you can see it exists but
+must request access to read it.
 
 Example channel create request:
 
