@@ -642,7 +642,7 @@ class BackchannelStore:
             ]
 
     def create_channel(self, payload: dict[str, Any], owner_id: str, key_id: str, team_id: str | None = None) -> dict[str, Any]:
-        name = self._required_string(payload, "name")
+        name = self._clean_channel_name(self._required_string(payload, "name"))
         mode = self._required_string(payload, "mode")
         if mode not in {"broadcast", "claimable"}:
             raise APIError(422, "invalid_mode", "Channel mode must be 'broadcast' or 'claimable'")
@@ -852,7 +852,7 @@ class BackchannelStore:
             channel = self._resolve_channel(conn, identifier, key_id=key_id, team_id=team_id)
             updates: list[tuple[str, Any]] = []
             if "name" in payload:
-                updates.append(("name", self._required_string(payload, "name")))
+                updates.append(("name", self._clean_channel_name(self._required_string(payload, "name"))))
             if "mode" in payload:
                 mode = self._required_string(payload, "mode")
                 if mode not in {"broadcast", "claimable"}:
@@ -2570,6 +2570,20 @@ class BackchannelStore:
             field = field_name or "value"
             raise APIError(422, "invalid_string", f"'{field}' must be a non-empty string")
         return value.strip()
+
+    def _clean_channel_name(self, name: str) -> str:
+        """Reject control/null bytes in channel names and cap length.
+
+        HTML escaping is the render layer's job (so '<', '>' are allowed), but
+        control characters (incl. NUL, newlines, DEL) have no place in a
+        single-line channel identifier and are a defense-in-depth hazard on a
+        bare self-host console without a CSP.
+        """
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+            raise APIError(422, "invalid_channel_name", "Channel name must not contain control characters")
+        if len(name) > 200:
+            raise APIError(422, "invalid_channel_name", "Channel name must be at most 200 characters")
+        return name
 
     def _ensure_mapping(self, value: Any, field_name: str) -> dict[str, Any]:
         if value is None:
