@@ -64,6 +64,10 @@ class Request:
     auth: AuthContext = None  # type: ignore[assignment]
     remote_addr: str = "unknown"
     rate_limit_remaining: int = 0
+    # Host + scheme the client reached us on, used to advertise the right base
+    # URL in agent docs when BACKCHANNEL_BASE_URL is unset (self-host).
+    host: str = ""
+    scheme: str = "http"
 
     def json(self) -> dict[str, Any]:
         if not self.body:
@@ -138,11 +142,21 @@ class BackchannelApp:
             limit=10,
             window_seconds=60,
             now_provider=self.store.now,
+            message="Invitation lookup rate limit exceeded",
         )
+        # Key-mint cap is operator-tunable: a self-host with its own abuse
+        # controls may want it higher (or off). 0 disables the cap.
+        mint_limit = int(os.environ.get("BACKCHANNEL_KEY_MINT_LIMIT", "5"))
+        mint_window = int(os.environ.get("BACKCHANNEL_KEY_MINT_WINDOW", "3600"))
         self.key_issuance_rate_limiter = SlidingWindowRateLimiter(
-            limit=5,
-            window_seconds=3600,
+            limit=mint_limit if mint_limit > 0 else 1_000_000_000,
+            window_seconds=mint_window,
             now_provider=self.store.now,
+            message=(
+                f"Key issuance rate limit exceeded: {mint_limit} new keys per "
+                f"{mint_window}s from one source. Self-host to raise it "
+                "(BACKCHANNEL_KEY_MINT_LIMIT)."
+            ),
         )
         # Enforcing per-key request limiter.
         self.api_rate_tracker = SlidingWindowRateLimiter(
@@ -230,7 +244,7 @@ class BackchannelApp:
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         request_id = str(uuid.uuid4())
-        docs_base = self.base_url or "https://backchannel.oakstack.eu"
+        docs_base = self._advertised_base(self._resolve_host(environ), self._resolve_scheme(environ))
         _t0 = __import__("time").monotonic()
         method_for_metrics = environ.get("REQUEST_METHOD", "GET")
         path_for_metrics = environ.get("PATH_INFO", "/")
@@ -268,6 +282,14 @@ class BackchannelApp:
             span_id = trace_id[:16]
             traceparent = f"00-{trace_id}-{span_id}-01"
 
+        # Baseline security headers, emitted by the app itself so that *any*
+        # deployment is covered — not just the prod instance behind nginx. A
+        # bare self-host (docker-compose.self-host.yml, no proxy) gets the same
+        # protection. The CSP keeps script-src tight ('self', no inline) — the
+        # landing has no inline scripts — while allowing inline styles, which it
+        # does use. HSTS is only meaningful over HTTPS, so it's gated on scheme.
+        forwarded_proto = environ.get("HTTP_X_FORWARDED_PROTO", "").split(",")[0].strip()
+        is_https = forwarded_proto == "https" or environ.get("wsgi.url_scheme") == "https"
         headers = [
             ("Content-Type", response.content_type),
             ("Content-Length", str(len(response.body))),
@@ -276,7 +298,18 @@ class BackchannelApp:
             ("X-RateLimit-Limit", str(self.rate_limit)),
             ("X-RateLimit-Window", str(self.rate_limit_window)),
             ("Access-Control-Allow-Origin", "*"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Frame-Options", "DENY"),
+            ("Referrer-Policy", "no-referrer"),
+            (
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+                "base-uri 'self'; form-action 'self'",
+            ),
         ]
+        if is_https:
+            headers.append(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
         if response.status < 400:
             headers.append(('Link', '</openapi.json>; rel="service-desc"'))
             headers.append(('Link', '</.well-known/ai-manifest.json>; rel="ai-manifest"'))
@@ -318,6 +351,49 @@ class BackchannelApp:
                 return hop
         return raw
 
+    _HOST_RE = re.compile(r"^[A-Za-z0-9._\-]+(:[0-9]{1,5})?$")
+
+    def _resolve_host(self, environ: dict[str, Any]) -> str:
+        """The host the client reached us on. Honors X-Forwarded-Host behind a
+        trusted proxy, then Host, then SERVER_NAME:SERVER_PORT. Validated against
+        a conservative pattern so a hostile header can't be injected into the
+        advertised base URL."""
+        raw_addr = str(environ.get("REMOTE_ADDR", ""))
+        candidate = ""
+        if self._is_trusted_proxy(raw_addr):
+            candidate = environ.get("HTTP_X_FORWARDED_HOST", "").split(",")[0].strip()
+        if not candidate:
+            candidate = environ.get("HTTP_HOST", "").strip()
+        if not candidate:
+            name = environ.get("SERVER_NAME", "").strip()
+            port = str(environ.get("SERVER_PORT", "")).strip()
+            candidate = f"{name}:{port}" if name and port not in ("", "80", "443") else name
+        return candidate if self._HOST_RE.match(candidate or "") else ""
+
+    def _resolve_scheme(self, environ: dict[str, Any]) -> str:
+        raw_addr = str(environ.get("REMOTE_ADDR", ""))
+        if self._is_trusted_proxy(raw_addr):
+            proto = environ.get("HTTP_X_FORWARDED_PROTO", "").split(",")[0].strip()
+            if proto in ("http", "https"):
+                return proto
+        scheme = str(environ.get("wsgi.url_scheme", "http"))
+        return scheme if scheme in ("http", "https") else "http"
+
+    def _advertised_base(self, host: str, scheme: str) -> str:
+        """Base URL advertised in agent docs (OpenAPI servers, ai-manifest,
+        /llms.txt, /agent-guide, error documentation_url). Precedence: explicit
+        BACKCHANNEL_BASE_URL, then the host the request arrived on (so a
+        self-host advertises *itself*, not the public showroom — review finding
+        #2), then the public URL as a last resort when no usable Host is present."""
+        if self.base_url:
+            return self.base_url
+        if host:
+            return f"{scheme}://{host}"
+        return "https://backchannel.oakstack.eu"
+
+    def _resolve_base_url(self, request: Request) -> str:
+        return self._advertised_base(request.host, request.scheme)
+
     def dispatch(self, environ: dict[str, Any]) -> Response:
         method = environ["REQUEST_METHOD"].upper()
         path = environ.get("PATH_INFO", "") or "/"
@@ -329,6 +405,8 @@ class BackchannelApp:
             body=self._read_body(environ),
             store=self.store,
             remote_addr=self._resolve_remote_addr(environ),
+            host=self._resolve_host(environ),
+            scheme=self._resolve_scheme(environ),
         )
 
         # CORS preflight: for any route that exists, OPTIONS returns 204
@@ -426,7 +504,7 @@ class BackchannelApp:
         with self.store.connect() as conn:
             conn.execute("SELECT 1")
         db_latency_ms = round((time.monotonic() - t0) * 1000, 1)
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         return self.json_response(200, {
             "status": "ok",
             "db_latency_ms": db_latency_ms,
@@ -444,11 +522,11 @@ class BackchannelApp:
         return Response(status=200, body=content.encode("utf-8"), content_type="text/markdown; charset=utf-8")
 
     def openapi(self, request: Request) -> Response:
-        spec = build_openapi_spec(onboarding_url=self.invitation_onboarding_url, base_url=self.base_url)
+        spec = build_openapi_spec(onboarding_url=self.invitation_onboarding_url, base_url=self._resolve_base_url(request))
         return Response(status=200, body=json.dumps(spec, indent=2).encode("utf-8"))
 
     def agent_guide(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         guide = f"""# Backchannel — Agent System Prompt
 
 ## What it is
@@ -602,7 +680,7 @@ Recovery path:
         return Response(status=200, body=guide.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def playground(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         auth_config = ""
         if self.demo_key:
             auth_config = (
@@ -647,7 +725,7 @@ Recovery path:
         )
 
     def robots_txt(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         content = f"""User-agent: *
 Allow: /
 
@@ -675,7 +753,7 @@ Allow: /
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def ai_plugin(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         payload = {
             "schema_version": "v1",
             "name_for_human": "Backchannel",
@@ -732,7 +810,7 @@ Allow: /
         )
 
     def ai_manifest(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         payload = {
             "name": "Backchannel",
             "tagline": "How agents call other agents.",
@@ -794,7 +872,7 @@ Allow: /
         return self.json_response(200, payload)
 
     def first_success_prompt(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         content = f"""# Backchannel — First Success Prompt
 # Copy-paste into your agent's system prompt. First call in under 60 seconds.
 
@@ -841,7 +919,7 @@ Report the channel id, message id, claim status, and ack status.
         return Response(status=200, body=content.encode("utf-8"), content_type="text/plain; charset=utf-8")
 
     def llms_txt(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         # Written *to* an LLM agent. Imperative, runnable, no marketing.
         content = f"""# Backchannel — instructions for agents
 
@@ -1642,7 +1720,7 @@ DEPRECATED (still work, but avoid in new code): /v1/tasks/claim-and-ack,
             )
 
     def status(self, request: Request) -> Response:
-        base = self.base_url or "https://backchannel.oakstack.eu"
+        base = self._resolve_base_url(request)
         from backchannel import __version__
         return self.json_response(200, {
             "status": "operational",

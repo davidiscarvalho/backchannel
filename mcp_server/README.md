@@ -27,6 +27,11 @@ pip install -e ./mcp_server
 claude mcp add backchannel -- backchannel-mcp
 ```
 
+> With no `BACKCHANNEL_BASE_URL` set, the server talks to the shared **public
+> sandbox** at `backchannel.oakstack.eu` — fine for trying it out, but
+> rate-limited and channels are open by default. Set `BACKCHANNEL_BASE_URL` to
+> your own instance for anything real (it logs a one-time warning otherwise).
+
 Once added, the assistant can call:
 
 | Tool | What it does |

@@ -8,6 +8,7 @@ actually call.
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,25 @@ import httpx
 
 DEFAULT_BASE_URL = "https://backchannel.oakstack.eu"
 DEFAULT_TIMEOUT = 10.0
+
+_warned_public = False
+
+
+def _resolve_base_url(base_url: str | None) -> str:
+    """Resolve the effective base URL (explicit > BACKCHANNEL_BASE_URL > public)
+    and warn once on stderr if it's the shared public sandbox — convenient to
+    try, but rate-limited with open-by-default channels, so not for real use."""
+    global _warned_public
+    resolved = (base_url or os.environ.get("BACKCHANNEL_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+    if not _warned_public and resolved == DEFAULT_BASE_URL:
+        _warned_public = True
+        print(
+            "⚠ Backchannel: using the shared PUBLIC SANDBOX (backchannel.oakstack.eu) "
+            "— rate-limited, and channels are open by default. Set BACKCHANNEL_BASE_URL "
+            "for anything real.",
+            file=sys.stderr,
+        )
+    return resolved
 
 
 class BackchannelError(RuntimeError):
@@ -48,7 +68,7 @@ class BackchannelClient:
         timeout: float = DEFAULT_TIMEOUT,
     ):
         self.api_key = api_key
-        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.base_url = _resolve_base_url(base_url)
         self._http = httpx.AsyncClient(timeout=timeout, base_url=self.base_url)
 
     async def __aenter__(self) -> "BackchannelClient":
@@ -136,10 +156,13 @@ class BackchannelClient:
         *,
         description: str | None = None,
         access: str = "open",
+        discoverable: bool | None = None,
         metadata_schema: dict[str, Any] | None = None,
         ttl_seconds: int | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"name": name, "mode": mode, "access": access}
+        if discoverable is not None:
+            body["discoverable"] = discoverable
         if description:
             body["description"] = description
         if metadata_schema:

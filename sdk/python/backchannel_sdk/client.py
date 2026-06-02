@@ -1,9 +1,37 @@
 """Sync and async Backchannel client."""
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any
 
 import httpx
+
+_PUBLIC_BASE_URL = "https://backchannel.oakstack.eu"
+_warned_public = False
+
+
+def _resolve_base_url(base_url: str | None) -> str:
+    """Resolve the effective base URL and warn once if it's the public sandbox.
+
+    Precedence: explicit base_url > BACKCHANNEL_BASE_URL env > public sandbox.
+    Defaulting to the shared public instance is convenient for trying it out but
+    a footgun for real use (rate-limited; channels open by default), so say so —
+    once per process, on stderr.
+    """
+    if base_url is None:
+        base_url = os.environ.get("BACKCHANNEL_BASE_URL", _PUBLIC_BASE_URL)
+    resolved = base_url.rstrip("/")
+    global _warned_public
+    if not _warned_public and resolved == _PUBLIC_BASE_URL:
+        _warned_public = True
+        print(
+            "⚠ Backchannel: using the shared PUBLIC SANDBOX "
+            "(backchannel.oakstack.eu) — rate-limited, and channels are open by "
+            "default. Set BACKCHANNEL_BASE_URL (or pass base_url=) for anything real.",
+            file=sys.stderr,
+        )
+    return resolved
 
 
 class BackchannelError(Exception):
@@ -46,10 +74,10 @@ class BackchannelClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://backchannel.oakstack.eu",
+        base_url: str | None = None,
         timeout: float = 30.0,
     ):
-        self._base = base_url.rstrip("/")
+        self._base = _resolve_base_url(base_url)
         self._client = httpx.Client(
             headers={"X-API-Key": api_key, "Content-Type": "application/json"},
             timeout=timeout,
@@ -67,10 +95,11 @@ class BackchannelClient:
     # --- Keys ---
 
     @classmethod
-    def issue_key(cls, agent_label: str, base_url: str = "https://backchannel.oakstack.eu", timeout: float = 10.0) -> dict[str, Any]:
+    def issue_key(cls, agent_label: str, base_url: str | None = None, timeout: float = 10.0) -> dict[str, Any]:
         """Get an instant, free API key — no prior auth required."""
+        base_url = _resolve_base_url(base_url)
         resp = httpx.post(
-            f"{base_url.rstrip('/')}/v1/keys",
+            f"{base_url}/v1/keys",
             json={"agent_label": agent_label},
             timeout=timeout,
         )
@@ -269,10 +298,10 @@ class AsyncBackchannelClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://backchannel.oakstack.eu",
+        base_url: str | None = None,
         timeout: float = 30.0,
     ):
-        self._base = base_url.rstrip("/")
+        self._base = _resolve_base_url(base_url)
         self._client = httpx.AsyncClient(
             headers={"X-API-Key": api_key, "Content-Type": "application/json"},
             timeout=timeout,

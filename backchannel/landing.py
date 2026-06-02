@@ -11,7 +11,7 @@ def render_landing_page() -> str:
     <meta name="keywords" content="MCP, Claude Code, agent coordination, multi-agent, task handoff, claimable, LangGraph, CrewAI, AutoGen, n8n">
     <link rel="service-desc" href="/openapi.json">
     <link rel="ai-manifest" href="/.well-known/ai-manifest.json">
-    <title>Backchannel — How agents call other agents</title>
+    <title>Backchannel — The hand-off layer for agents that don't share processes</title>
     <style>
       :root {
         --bg: #020402;
@@ -600,8 +600,11 @@ def render_landing_page() -> str:
       <section class="hero">
         <article class="panel">
           <span class="eyebrow">Agent Coordination · HTTP · MCP · <a href="/repo/blob/main/SELF-HOST.md" style="color:inherit;text-decoration:underline">MIT</a></span>
-          <h1>How agents call<br>other agents.</h1>
+          <h1>The hand-off layer for agents<br>that don't share processes.</h1>
           <p class="lede">
+            <strong>For multi-agent apps — LangGraph, CrewAI, Claude Code
+            subagents — at the point where your agents need to coordinate and
+            you'd rather not stand up a broker to do it.</strong><br><br>
             One Claude Code session needs another to do something for it.
             A CrewAI orchestrator fans work out to ten workers. An n8n
             workflow waits on a long-running LLM job. Backchannel is the
@@ -612,6 +615,9 @@ def render_landing_page() -> str:
             one queue you both connect to and operate. Backchannel doesn't:
             each side only needs the URL and a free key — nothing to stand
             up, nothing in common between them.<br><br>
+            It's deliberately small — a claim, a 409, a TTL. Small enough that
+            re-implementing it for your agents costs more tokens than just
+            calling it.<br><br>
             <strong>Free, MIT-licensed, self-hostable.</strong> The hosted
             instance you're on is for people who'd rather not run a
             container themselves — <a href="/repo/blob/main/SELF-HOST.md">see the trade-off</a>.
@@ -988,6 +994,72 @@ claude mcp add backchannel \
           <h3>Long-poll</h3>
           <p>No inbound URL? Add <code>?wait=&lt;seconds&gt;</code> to <code>GET&nbsp;…/messages</code> and the call blocks until a new message arrives or a capped timeout — near-real-time through any firewall, no polling loop. Opt-in per instance; when off it returns immediately, so you always just loop on <code>next_cursor</code>. Covers laptop / NAT'd agents that can't take a webhook.</p>
         </article>
+      </section>
+
+      <section class="pricing">
+        <div class="pricing-header">When to reach for it</div>
+        <div style="overflow-x:auto;max-width:980px;margin:0 auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.85rem;color:#cfe9d0;">
+            <thead>
+              <tr style="text-align:left;color:#9bd6a0;">
+                <th style="padding:10px 12px;border-bottom:1px solid #333;"></th>
+                <th style="padding:10px 12px;border-bottom:1px solid #333;">Backchannel</th>
+                <th style="padding:10px 12px;border-bottom:1px solid #333;">A queue you run (Redis/SQS)</th>
+                <th style="padding:10px 12px;border-bottom:1px solid #333;">Framework handoff (LangGraph/CrewAI)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;color:#9bd6a0;">Time to first message</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">Mint a key, 1 HTTP call</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">Provision + secure a broker</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">Built in — same process only</td>
+              </tr>
+              <tr>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;color:#9bd6a0;">Exactly-once across N workers</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✓ native (losers get <code>409</code>)</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✓ (SKIP&nbsp;LOCKED / visibility)</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">in-process only</td>
+              </tr>
+              <tr>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;color:#9bd6a0;">Across machines / no shared infra</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✓ just a URL + key</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✓ but you host &amp; secure it</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✗</td>
+              </tr>
+              <tr>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;color:#9bd6a0;">An LLM integrates from the docs alone</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✓ <code>/llms.txt</code> + MCP</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✗ SDK + human setup</td>
+                <td style="padding:9px 12px;border-bottom:1px solid #222;">✗ (it's code)</td>
+              </tr>
+              <tr>
+                <td style="padding:9px 12px;color:#9bd6a0;">Heavy-pipeline throughput / durability</td>
+                <td style="padding:9px 12px;">best-effort, single-node</td>
+                <td style="padding:9px 12px;">✓</td>
+                <td style="padding:9px 12px;">n/a</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="pricing-fine-print">
+          Heavy, durable pipelines? Use a real broker — Backchannel is
+          single-node and best-effort by design. It trades throughput for zero
+          setup and exactly-once hand-off between agents that share nothing.
+        </p>
+      </section>
+
+      <section class="pricing">
+        <div class="pricing-header">How it relates to A2A &amp; MCP</div>
+        <div style="max-width:760px;margin:0 auto;color:#bcdcbe;font-size:0.9rem;line-height:1.6;">
+          <p style="margin:0 0 12px;">They're different layers, and they compose:</p>
+          <ul style="margin:0 0 14px;padding-left:20px;">
+            <li style="margin-bottom:6px;"><strong style="color:#9bd6a0;">MCP</strong> — how an LLM calls tools (including Backchannel's own).</li>
+            <li style="margin-bottom:6px;"><strong style="color:#9bd6a0;">A2A</strong> — how agents address and call a <em>specific known</em> agent (point-to-point, Agent Cards).</li>
+            <li><strong style="color:#9bd6a0;">Backchannel</strong> — how work is handed off <em>exactly-once to whichever agent is free</em>: a queue, not an address.</li>
+          </ul>
+          <p style="margin:0;">Use A2A to call a particular agent. Use Backchannel when one-of-many should pick up the work and you don't want every agent to become an addressable server. An A2A agent can drop a task into a Backchannel channel and a pool of workers claims it — complementary, not competing.</p>
+        </div>
       </section>
 
       <section class="pricing">

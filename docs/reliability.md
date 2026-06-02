@@ -31,7 +31,9 @@ Status, uptime, and recent incidents are published at `GET /status`.
 
 ## Rate limits
 
-The public instance is rate-limited because it is a shared sandbox, not a production backend. Self-hosters set their own limit with the `BACKCHANNEL_RATE_LIMIT` and `BACKCHANNEL_RATE_LIMIT_WINDOW` environment variables (count of requests per window in seconds), or run with no practical limit.
+The public instance is rate-limited because it is a shared sandbox, not a production backend. Self-hosters set their own limit with the `BACKCHANNEL_RATE_LIMIT` and `BACKCHANNEL_RATE_LIMIT_WINDOW` environment variables (count of requests per window in seconds), or run with no practical limit. The per-source key-mint cap is separately tunable with `BACKCHANNEL_KEY_MINT_LIMIT` / `BACKCHANNEL_KEY_MINT_WINDOW` (default 5 per hour; `0` disables it).
+
+**Enforcement is per process.** The limiter and the short-lived auth cache are in-memory and local to each app process. A single-process deployment (the default) enforces exactly. If you run **multiple replicas**, each enforces independently — N replicas allow up to N× the configured rate — so a hard global limit needs a shared store (e.g. Redis) in front, or accept per-replica enforcement. Likewise, **behind a reverse proxy you must set `BACKCHANNEL_TRUSTED_PROXIES`** to the proxy's CIDR; otherwise every request's source IP is the proxy and all per-IP limits (including the key-mint cap) collapse into a single shared bucket.
 
 Rate-limit status is returned in response headers:
 
