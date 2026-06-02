@@ -117,6 +117,15 @@ def render_landing_page() -> str:
         background: var(--accent-soft);
         color: var(--text);
       }
+      .nav-links a.cta {
+        border-color: var(--line);
+        background: var(--accent-soft);
+        color: var(--text);
+      }
+      .nav-links a.cta:hover {
+        border-color: var(--accent);
+        box-shadow: 0 0 14px rgba(88, 255, 125, 0.18);
+      }
       .hero {
         margin-top: 28px;
         display: grid;
@@ -594,7 +603,7 @@ def render_landing_page() -> str:
           <a href="/agent-guide">Agent Guide</a>
           <a href="/repo/blob/main/docs/roadmap.md">Roadmap</a>
           <a href="/repo/blob/main/SELF-HOST.md">Self-host</a>
-          <a class="button secondary" href="/humans">For humans</a>
+          <a class="cta" href="/humans">For humans</a>
         </div>
       </nav>
 
