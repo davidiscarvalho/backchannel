@@ -62,26 +62,25 @@ def _clamp(value: int, low: int, high: int) -> int:
 
 
 def _base_url_advisory(base_url: str, host: str) -> str | None:
-    """Warn when the advertised base URL is still a localhost default while the
-    server is publicly bound.
+    """Nudge the operator to pin a canonical base URL when one isn't set.
 
-    ``base_url`` is what agents are told to connect to (OpenAPI ``servers`` +
-    ai-manifest.json). If it points at localhost but the socket is bound to all
-    interfaces (the Docker default, ``--host 0.0.0.0``), an agent that fetches
-    the manifest from outside will be handed an unreachable address. That fails
-    silently — discovery "works", the returned URL just doesn't. Surface it.
-    Returns the warning text, or ``None`` when nothing looks wrong.
+    When ``BACKCHANNEL_BASE_URL`` is unset the server now derives the advertised
+    URL (OpenAPI ``servers``, ai-manifest, /llms.txt) from each request's Host
+    header — so a self-host correctly advertises *itself*, not the public
+    showroom. That's safe, but it means the advertised URL follows whatever host
+    a client used; setting BASE_URL pins a single canonical address. Only nudge
+    when publicly bound (the Docker default) and BASE_URL is unset/localhost.
+    Returns the advisory text, or ``None`` when nothing looks worth saying.
     """
     publicly_bound = host in ("0.0.0.0", "::")
     looks_local = (not base_url) or "localhost" in base_url or "127.0.0.1" in base_url
     if publicly_bound and looks_local:
         shown = base_url or "(unset)"
         return (
-            f"WARNING: advertising base_url={shown} while bound to {host}. Agents "
-            "that fetch /openapi.json or ai-manifest.json will be told to connect "
-            "to that address. For anything but local testing, set "
-            "BACKCHANNEL_BASE_URL to your public URL "
-            "(e.g. BACKCHANNEL_BASE_URL=https://bus.example.com)."
+            f"NOTE: BACKCHANNEL_BASE_URL={shown} while bound to {host}. Agent docs "
+            "will advertise each request's Host header (so this self-host points "
+            "agents at itself, not the public showroom). Set BACKCHANNEL_BASE_URL "
+            "to pin a single canonical URL (e.g. https://bus.example.com)."
         )
     return None
 
@@ -263,7 +262,7 @@ def main() -> int:
     with make_server(args.host, args.port, app, server_class=ThreadingWSGIServer) as server:
         print(f"Backchannel listening on http://{args.host}:{args.port}", flush=True)
         print(
-            f"advertising base_url={advertised or '(unset → agent docs fall back to the public instance)'}",
+            f"advertising base_url={advertised or '(unset → agent docs use each request Host)'}",
             flush=True,
         )
         advisory = _base_url_advisory(advertised, args.host)
