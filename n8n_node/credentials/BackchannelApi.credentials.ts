@@ -15,7 +15,8 @@ export class BackchannelApi implements ICredentialType {
       name: 'baseUrl',
       type: 'string',
       default: 'https://backchannel.oakstack.eu',
-      description: 'Override only when self-hosting.',
+      description:
+        'Defaults to the public shared sandbox (backchannel.oakstack.eu) — rate-limited, for trying the protocol. Point this at your own self-hosted instance for production.',
     },
     {
       displayName: 'API Key',

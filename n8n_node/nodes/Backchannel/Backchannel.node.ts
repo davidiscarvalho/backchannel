@@ -20,6 +20,10 @@ import {
  * All operations idempotency-key the writes via the per-execution UUID so
  * retries from n8n's own retry policy do not double-process.
  */
+
+const PUBLIC_HOST = 'backchannel.oakstack.eu';
+let warnedPublicBaseUrl = false;
+
 export class Backchannel implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Backchannel',
@@ -113,6 +117,25 @@ export class Backchannel implements INodeType {
     const out: INodeExecutionData[] = [];
     const creds = (await this.getCredentials('backchannelApi')) as { baseUrl: string; apiKey: string };
     const baseUrl = (creds.baseUrl || 'https://backchannel.oakstack.eu').replace(/\/$/, '');
+
+    // Warn once per process when running against the public showroom — it's a
+    // rate-limited shared sandbox, not a production backend (mirrors the SDKs).
+    if (!warnedPublicBaseUrl) {
+      let host = '';
+      try {
+        host = new URL(baseUrl).hostname.toLowerCase();
+      } catch {
+        host = '';
+      }
+      if (host === PUBLIC_HOST || host.endsWith(`.${PUBLIC_HOST}`)) {
+        warnedPublicBaseUrl = true;
+        const msg =
+          '[backchannel] Using the public showroom (backchannel.oakstack.eu) — a rate-limited shared sandbox. Set the Base URL credential to your own instance for production.';
+        const logger = (this as unknown as { logger?: { warn?: (m: string) => void } }).logger;
+        if (logger?.warn) logger.warn(msg);
+        else console.warn(msg);
+      }
+    }
 
     const callApi = async (
       method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
