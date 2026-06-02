@@ -5,7 +5,8 @@ Backchannel channel; workers post results on a sibling broadcast
 channel; orchestrator waits until all results are in.
 
 ```bash
-pip install langgraph backchannel
+pip install langgraph
+pip install -e ../../sdk/python   # Backchannel SDK (not yet on PyPI)
 python graph_demo.py
 ```
 

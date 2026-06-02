@@ -10,7 +10,8 @@ different cloud — the only contract is the Backchannel URL.
 
 Run:
 
-    pip install langgraph backchannel
+    pip install langgraph
+    pip install -e ../../sdk/python   # the Backchannel SDK (not yet on PyPI)
     python graph_demo.py
 """
 
@@ -26,7 +27,7 @@ try:
 except ImportError:
     print(
         "This demo needs the Backchannel Python SDK:\n"
-        "    pip install backchannel\n"
+        "    pip install -e ../../sdk/python   # (not yet on PyPI)\n"
         "(or `pip install -e ../../sdk/python` against this repo)",
         file=sys.stderr,
     )
@@ -52,8 +53,8 @@ def fan_out(client: BackchannelClient, tasks: list[str]) -> list[str]:
     client.create_channel(name=RESULTS, mode="broadcast")
     ids = []
     for task in tasks:
-        env = client.post_message(WORK, content=task, actor_label="orchestrator")
-        ids.append(env["message"]["id"])
+        msg = client.send_message(WORK, content=task, actor_label="orchestrator")
+        ids.append(msg["id"])
     return ids
 
 
@@ -76,24 +77,24 @@ def await_results(client: BackchannelClient, expected: int, timeout: float = 30.
 
 
 def worker_loop(client: BackchannelClient, worker_name: str, max_msgs: int = 5) -> None:
-    actor = client.create_actor(name=worker_name)
+    # A plain actor name auto-creates the actor on claim/ack — no pre-registration.
     processed = 0
     while processed < max_msgs:
         page = client.list_messages(WORK, limit=20)
         any_claimed = False
         for msg in page["data"]:
-            if msg.get("status") == "claimed" or msg.get("acknowledged_by"):
+            if msg.get("claimed_by") or msg.get("acknowledged_by"):
                 continue
             try:
-                client.claim_message(msg["id"], actor=actor["id"])
+                client.claim_message(msg["id"], actor=worker_name)
             except Exception:
                 continue  # someone else got it
-            client.post_message(
+            client.send_message(
                 RESULTS,
                 content=f"{worker_name} processed: {msg['content']}",
                 actor_label=worker_name,
             )
-            client.ack_message(msg["id"], actor=actor["id"])
+            client.ack_message(msg["id"], actor=worker_name)
             processed += 1
             any_claimed = True
         if not any_claimed:

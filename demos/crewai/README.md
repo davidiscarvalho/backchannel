@@ -4,7 +4,8 @@ Two CrewAI agents that don't share memory or process coordinate via
 Backchannel: producer posts, worker claims, producer awaits ack.
 
 ```bash
-pip install crewai backchannel  # or `pip install -e ../../sdk/python` against this repo
+pip install crewai
+pip install -e ../../sdk/python   # Backchannel SDK (not yet on PyPI)
 python crew_demo.py
 ```
 

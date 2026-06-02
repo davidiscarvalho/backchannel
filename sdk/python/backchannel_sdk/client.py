@@ -90,7 +90,9 @@ class BackchannelClient:
         webhook_secret: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        body: dict[str, Any] = {"name": name, "mode": mode, "access": access, "description": description}
+        body: dict[str, Any] = {"name": name, "mode": mode, "access": access}
+        if description:
+            body["description"] = description
         if webhook_url:
             body["webhook_url"] = webhook_url
         if webhook_secret:
@@ -105,6 +107,29 @@ class BackchannelClient:
         _raise_for(resp)
         return resp.json()
 
+    def discover_channels(self, *, limit: int | None = None, cursor: str | None = None) -> dict[str, Any]:
+        """List channels marked discoverable (metadata only). Returns {data, next_cursor}."""
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        resp = self._client.get(f"{self._base}/v1/channels", params=params or None)
+        _raise_for(resp)
+        return resp.json()
+
+    def request_access(self, channel_id: str, *, reason: str = "") -> dict[str, Any]:
+        """Request access to a discoverable, restricted channel (owner approves)."""
+        resp = self._client.post(f"{self._base}/v1/channels/{channel_id}/access-requests", json={"reason": reason})
+        _raise_for(resp)
+        return resp.json()
+
+    def set_actor_webhook(self, actor_id: str, url: str, *, secret: str | None = None) -> dict[str, Any]:
+        """Register a webhook for an actor so it is pushed messages that mention it."""
+        resp = self._client.post(f"{self._base}/v1/actors/{actor_id}/webhook", json={"url": url, "secret": secret})
+        _raise_for(resp)
+        return resp.json()
+
     # --- Messages ---
 
     def send_message(
@@ -115,6 +140,7 @@ class BackchannelClient:
         actor: str | None = None,
         actor_label: str | None = None,
         metadata: dict[str, Any] | None = None,
+        mentions: list[str] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"content": content}
@@ -124,6 +150,8 @@ class BackchannelClient:
             body["actor_label"] = actor_label
         if metadata:
             body["metadata"] = metadata
+        if mentions:
+            body["mentions"] = mentions
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
         resp = self._client.post(f"{self._base}/v1/channels/{channel_id}/messages", json=body, headers=headers)
         _raise_for(resp)
@@ -136,11 +164,15 @@ class BackchannelClient:
         *,
         since: str | None = None,
         limit: int = 50,
+        wait: float | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit}
         if since is not None:
             params["since"] = since
-        resp = self._client.get(f"{self._base}/v1/channels/{channel_id}/messages", params=params)
+        if wait is not None:
+            params["wait"] = wait  # long-poll if the instance enables it; else returns immediately
+        timeout = (wait + 10.0) if wait else None
+        resp = self._client.get(f"{self._base}/v1/channels/{channel_id}/messages", params=params, timeout=timeout)
         _raise_for(resp)
         return resp.json()
 
@@ -256,7 +288,10 @@ class AsyncBackchannelClient:
         await self.aclose()
 
     async def create_channel(self, name: str, *, mode: str = "claimable", access: str = "open", description: str = "") -> dict[str, Any]:
-        resp = await self._client.post(f"{self._base}/v1/channels", json={"name": name, "mode": mode, "access": access, "description": description})
+        body: dict[str, Any] = {"name": name, "mode": mode, "access": access}
+        if description:
+            body["description"] = description
+        resp = await self._client.post(f"{self._base}/v1/channels", json=body)
         _raise_for(resp)
         return resp.json()
 

@@ -9,7 +9,8 @@ durably, with no Postgres/Redis/queue to operate.
 
 Run:
 
-    pip install crewai backchannel
+    pip install crewai
+    pip install -e ../../sdk/python   # the Backchannel SDK (not yet on PyPI)
     python crew_demo.py
 """
 
@@ -25,7 +26,7 @@ try:
 except ImportError:
     print(
         "This demo needs the Backchannel Python SDK. Install with:\n"
-        "    pip install backchannel\n"
+        "    pip install -e ../../sdk/python   # (not yet on PyPI)\n"
         "(while this repo still uses the in-tree SDK, run: pip install -e ./sdk/python)",
         file=sys.stderr,
     )
@@ -51,26 +52,26 @@ def run() -> None:
     cid = channel["id"]
 
     print("▸ producer posts a task")
-    envelope = producer.post_message(
+    posted = producer.send_message(
         cid,
         content="Summarize the latest CrewAI release notes in three bullets.",
         actor_label="researcher-orchestrator",
     )
-    msg_id = envelope["message"]["id"]
+    msg_id = posted["id"]
     print(f"  message id: {msg_id}")
 
     print("▸ worker drains channel and claims the task")
     page = worker.list_messages(cid, limit=10)
     target = next(m for m in page["data"] if m["id"] == msg_id)
-    actor = worker.create_actor(name="claimer-1")
-    claim = worker.claim_message(target["id"], actor=actor["id"])
+    # A plain actor name auto-creates the actor on claim — no pre-registration.
+    claim = worker.claim_message(target["id"], actor="claimer-1")
     print(f"  claimed by: {claim['message']['claimed_by']['name']}")
 
     print("▸ worker 'does the work' (echo for demo) and acks")
     # In a real CrewAI run, this is where you'd dispatch to a Task / Agent /
     # Tool, capture the result, and write it back on a sibling channel
     # named e.g. f"{CHANNEL}-results".
-    worker.ack_message(target["id"], actor=actor["id"])
+    worker.ack_message(target["id"], actor="claimer-1")
 
     print("▸ producer awaits ack")
     for _ in range(20):

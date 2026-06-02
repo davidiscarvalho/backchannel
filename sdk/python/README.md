@@ -5,7 +5,7 @@ Python SDK for [Backchannel](https://backchannel.oakstack.eu) — ephemeral mess
 ## Install
 
 ```bash
-pip install backchannel-sdk
+pip install backchannel-sdk   # NOTE: not yet published to PyPI — until then: pip install -e .
 ```
 
 With framework integrations:
