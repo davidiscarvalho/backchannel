@@ -79,6 +79,26 @@ class DocContractTests(unittest.TestCase):
         self.assertEqual(status, 200, f"{path} returned {status}")
         return body
 
+    def test_version_fields_are_unambiguous(self) -> None:
+        # /status reports the software version (__version__). /health and the
+        # ai-manifest report the API/contract version under a distinct key, so
+        # an agent never sees two different "version" values across surfaces.
+        from backchannel import __version__
+
+        status, health = self.json("GET", "/health")
+        self.assertEqual(status, 200, health)
+        self.assertEqual(health.get("api_version"), "1.0", health)
+        self.assertNotIn("version", health)
+
+        status, manifest = self.json("GET", "/ai-manifest.json")
+        self.assertEqual(status, 200, manifest)
+        self.assertEqual(manifest.get("api_version"), "1.0", manifest)
+        self.assertNotIn("version", manifest)
+
+        status, st = self.json("GET", "/status")
+        self.assertEqual(status, 200, st)
+        self.assertEqual(st.get("version"), __version__, st)
+
     def test_real_responses_use_documented_field_names(self) -> None:
         status, channel = self.json("POST", "/v1/channels", {"name": "contract-q", "mode": "claimable"})
         self.assertEqual(status, 201, channel)

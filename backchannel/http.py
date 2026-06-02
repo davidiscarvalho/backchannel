@@ -430,7 +430,7 @@ class BackchannelApp:
         return self.json_response(200, {
             "status": "ok",
             "db_latency_ms": db_latency_ms,
-            "version": "1.0",
+            "api_version": "1.0",
             "instance_kind": self.instance_kind,
             "status_url": f"{base}/docs/reliability.md",
         })
@@ -742,7 +742,7 @@ Allow: /
                 "other claims it, and the claim is exclusive (first valid claim "
                 "wins; the rest get 409)."
             ),
-            "version": "1.0",
+            "api_version": "1.0",
             "base_url": base,
             "auth": {
                 "type": "api_key",
