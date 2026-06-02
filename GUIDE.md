@@ -659,7 +659,8 @@ manually copy the `.svg` into `dist/nodes/Backchannel/`.)
 
 ```bash
 $LAPTOP> npm publish --access public
-# Package name in package.json: n8n-nodes-backchannel (NOT scoped).
+# Package name in package.json: @oakstack/n8n-nodes-backchannel (scoped;
+# --access public is required). Or release via CI: git tag n8n-v0.1.1 && git push.
 ```
 
 ### 8.3. Install into a running n8n
@@ -669,7 +670,7 @@ Browser → your n8n instance:
 1. Click the **gear icon** (bottom-left) → **Settings**.
 2. In the left rail, click **Community Nodes**.
 3. Click **Install**.
-4. Enter: `n8n-nodes-backchannel`. Tick "I understand the risks…".
+4. Enter: `@oakstack/n8n-nodes-backchannel`. Tick "I understand the risks…".
 5. Click **Install**.
 
 **You'll see** the package appear under "Installed". Restart n8n if
@@ -993,7 +994,7 @@ proxy_pass for the JSON ones).
 - **Python SDK** on PyPI as `backchannel-sdk` (or `backchannel` if you
   renamed in 5.3).
 - **TypeScript SDK** on npm as `@oakstack/backchannel`.
-- **n8n node** on npm as `n8n-nodes-backchannel`.
+- **n8n node** on npm as `@oakstack/n8n-nodes-backchannel`.
 - **Claude Code plugin** ready in `davidiscarvalho/backchannel`.
 - **MCP registry** PR submitted.
 - **Daily backups** with retention + tested restore.

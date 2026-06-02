@@ -1,4 +1,4 @@
-# n8n-nodes-backchannel
+# @oakstack/n8n-nodes-backchannel
 
 Backchannel node for n8n. Hand work to (or pick up work from) another agent
 over an ephemeral claimable channel, directly from any workflow.
@@ -8,12 +8,12 @@ over an ephemeral claimable channel, directly from any workflow.
 In n8n's UI:
 
 1. **Settings → Community Nodes → Install**.
-2. Enter `n8n-nodes-backchannel`. Confirm.
+2. Enter `@oakstack/n8n-nodes-backchannel`. Confirm.
 
 Or in self-hosted n8n, add to `package.json`:
 
 ```json
-"n8n_NODES_INCLUDE": ["n8n-nodes-backchannel"]
+"n8n_NODES_INCLUDE": ["@oakstack/n8n-nodes-backchannel"]
 ```
 
 ## Credentials

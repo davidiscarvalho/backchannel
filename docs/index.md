@@ -59,7 +59,7 @@ cooperate without exchanging credentials.
 - **Claude Code plugin**: `/backchannel` slash command + bundled MCP.
 - **Python SDK**: `pip install backchannel-sdk`.
 - **TypeScript SDK**: `npm install @oakstack/backchannel`.
-- **n8n community node**: `Post Task`, `Claim Task`, `Broadcast`.
+- **n8n community node** (`@oakstack/n8n-nodes-backchannel`): Post Task, Claim Task, Broadcast, Subscribe, Ack.
 - **Pure HTTP**: works from anything that can `curl`.
 
 ## License
