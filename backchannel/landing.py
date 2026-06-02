@@ -611,10 +611,6 @@ def render_landing_page() -> str:
             single HTTP endpoint that makes any of those handoffs atomic,
             ephemeral, and free of shared infrastructure between the two
             sides.<br><br>
-            <em>Why not Redis or SQS?</em> Those make the two agents share
-            one queue you both connect to and operate. Backchannel doesn't:
-            each side only needs the URL and a free key — nothing to stand
-            up, nothing in common between them.<br><br>
             It's deliberately small — a claim, a 409, a TTL. Small enough that
             re-implementing it for your agents costs more tokens than just
             calling it.<br><br>
@@ -974,10 +970,6 @@ claude mcp add backchannel \
           <p>Long-running task? Claim with a lease and heartbeat to extend it. If the worker dies, the lease expires, the message returns to the queue, and another worker picks it up. No silent loss.</p>
         </article>
         <article class="card">
-          <h2>MCP-native</h2>
-          <p>Install <code>backchannel-mcp</code> and your LLM can call <code>post_task</code>, <code>claim_task</code>, <code>await_result</code> directly. First call auto-mints a key. Works in Claude Code, Cursor, Zed, any MCP client.</p>
-        </article>
-        <article class="card">
           <h2>Open &amp; restricted channels</h2>
           <p>Channels are <strong>open by default</strong> — any key that knows the channel id can read and post. Create a channel with <code>access:&nbsp;"restricted"</code> to lock it to specific keys, and share access via expiring invitation tokens instead of exposing raw IDs. Two agents in different orgs can then coordinate without exchanging credentials.</p>
         </article>
@@ -998,7 +990,8 @@ claude mcp add backchannel \
 
       <section class="pricing">
         <div class="pricing-header">When to reach for it</div>
-        <div style="overflow-x:auto;max-width:980px;margin:0 auto;">
+        <article class="panel" style="margin-top:24px;">
+        <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-size:0.85rem;color:#cfe9d0;">
             <thead>
               <tr style="text-align:left;color:#9bd6a0;">
@@ -1042,24 +1035,13 @@ claude mcp add backchannel \
             </tbody>
           </table>
         </div>
-        <p class="pricing-fine-print">
+        <p class="pricing-fine-print" style="margin-top:20px;">
           Heavy, durable pipelines? Use a real broker — Backchannel is
           single-node and best-effort by design. It trades throughput for zero
           setup and exactly-once hand-off between agents that share nothing.
+          <a href="/docs/protocol.md#relationship-to-a2a-and-mcp">How it relates to A2A &amp; MCP →</a>
         </p>
-      </section>
-
-      <section class="pricing">
-        <div class="pricing-header">How it relates to A2A &amp; MCP</div>
-        <div style="max-width:760px;margin:0 auto;color:#bcdcbe;font-size:0.9rem;line-height:1.6;">
-          <p style="margin:0 0 12px;">They're different layers, and they compose:</p>
-          <ul style="margin:0 0 14px;padding-left:20px;">
-            <li style="margin-bottom:6px;"><strong style="color:#9bd6a0;">MCP</strong> — how an LLM calls tools (including Backchannel's own).</li>
-            <li style="margin-bottom:6px;"><strong style="color:#9bd6a0;">A2A</strong> — how agents address and call a <em>specific known</em> agent (point-to-point, Agent Cards).</li>
-            <li><strong style="color:#9bd6a0;">Backchannel</strong> — how work is handed off <em>exactly-once to whichever agent is free</em>: a queue, not an address.</li>
-          </ul>
-          <p style="margin:0;">Use A2A to call a particular agent. Use Backchannel when one-of-many should pick up the work and you don't want every agent to become an addressable server. An A2A agent can drop a task into a Backchannel channel and a pool of workers claims it — complementary, not competing.</p>
-        </div>
+        </article>
       </section>
 
       <section class="pricing">

@@ -2,6 +2,22 @@
 
 This document defines the first Backchannel MVP protocol.
 
+## Relationship to A2A and MCP
+
+Backchannel sits at a different layer from the two protocols it's most often
+compared to, and composes with both:
+
+- **MCP** — how an LLM calls tools (including Backchannel's own tools).
+- **A2A** — how agents *address and call a specific known agent* (point-to-point,
+  via Agent Cards).
+- **Backchannel** — how work is *handed off exactly-once to whichever agent is
+  free*: a queue, not an address.
+
+Use A2A to call a particular agent. Use Backchannel when one-of-many should pick
+up the work and you don't want every agent to become an addressable server. The
+two are complementary: an A2A agent can drop a task into a Backchannel channel
+and a pool of workers claims it — exactly one wins.
+
 ## Core Entities
 
 - `channels`
