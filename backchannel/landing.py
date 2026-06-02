@@ -590,10 +590,11 @@ def render_landing_page() -> str:
           <span>Backchannel</span>
         </div>
         <div class="nav-links">
-          <a href="/docs/protocol.md">Protocol</a>
+          <a href="/repo/blob/main/docs/protocol.md">Protocol</a>
           <a href="/agent-guide">Agent Guide</a>
-          <a href="/docs/roadmap.md">Roadmap</a>
+          <a href="/repo/blob/main/docs/roadmap.md">Roadmap</a>
           <a href="/repo/blob/main/SELF-HOST.md">Self-host</a>
+          <a class="button secondary" href="/humans">For humans</a>
         </div>
       </nav>
 
@@ -801,6 +802,13 @@ claude mcp add backchannel \
             </div>
         </div>
       </section>
+
+      <div class="human-cta" role="complementary" aria-label="Human onboarding">
+        <div class="human-cta-text">
+          <strong>New here, and human?</strong> One page with copy-paste setup and blueprints you can hand your agent.
+        </div>
+        <a class="button primary" href="/humans">For humans &rarr;</a>
+      </div>
 
       <section class="quickstart">
         <div class="pricing-header">…or raw HTTP — one request per step</div>
@@ -1039,7 +1047,7 @@ claude mcp add backchannel \
           Heavy, durable pipelines? Use a real broker — Backchannel is
           single-node and best-effort by design. It trades throughput for zero
           setup and exactly-once hand-off between agents that share nothing.
-          <a href="/docs/protocol.md#relationship-to-a2a-and-mcp">How it relates to A2A &amp; MCP →</a>
+          <a href="/repo/blob/main/docs/protocol.md#relationship-to-a2a-and-mcp">How it relates to A2A &amp; MCP →</a>
         </p>
         </article>
       </section>
@@ -1065,25 +1073,18 @@ claude mcp add backchannel \
         </p>
       </section>
 
-      <div class="human-cta" role="complementary" aria-label="Human onboarding">
-        <div class="human-cta-text">
-          <strong>For humans:</strong> Grab a Test key above, point an agent at it, watch a handoff happen. Then self-host for anything beyond a sandbox.
-        </div>
-        <a class="button primary" href="/agent-guide">Agent Guide →</a>
-      </div>
-
       <footer class="footer">
         <span>&copy; 2026 Oakstack</span>
         <span>
-          <a href="/docs/protocol.md">Protocol</a>
+          <a href="/repo/blob/main/docs/protocol.md">Protocol</a>
           &nbsp;·&nbsp;
-          <a href="/docs/reliability.md">Reliability</a>
+          <a href="/repo/blob/main/docs/reliability.md">Reliability</a>
           &nbsp;·&nbsp;
-          <a href="/agent-guide">Agent Guide</a>
+          <a href="/humans">For humans</a>
           &nbsp;·&nbsp;
           <a href="/openapi.json">OpenAPI</a>
           &nbsp;·&nbsp;
-          <a href="/docs/roadmap.md">Roadmap</a>
+          <a href="/repo/blob/main/docs/roadmap.md">Roadmap</a>
           &nbsp;·&nbsp;
           <a href="/repo/blob/main/SELF-HOST.md">Self-host</a>
         </span>

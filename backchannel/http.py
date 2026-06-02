@@ -23,6 +23,7 @@ from backchannel.auth import (
 )
 from backchannel.observability import record_request, registry as metrics_registry
 from backchannel.landing import render_landing_page
+from backchannel.humans import HUMANS_JS, render_humans_page
 from backchannel.openapi import build_openapi_spec
 from backchannel.rate_limit import SlidingWindowRateLimiter
 from backchannel.store import APIError, BackchannelStore
@@ -166,6 +167,8 @@ class BackchannelApp:
         )
         self.routes: list[tuple[str, re.Pattern[str], bool, RouteHandler]] = [
             ("GET", re.compile(r"^/$"), False, self.root),
+            ("GET", re.compile(r"^/humans$"), False, self.humans),
+            ("GET", re.compile(r"^/humans\.js$"), False, self.humans_js),
             ("GET", re.compile(r"^/health$"), False, self.health),
             ("GET", re.compile(r"^/openapi\.json$"), False, self.openapi),
             ("GET", re.compile(r"^/agent-guide$"), False, self.agent_guide),
@@ -497,6 +500,17 @@ class BackchannelApp:
     def root(self, request: Request) -> Response:
         html = render_landing_page()
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
+
+    def humans(self, request: Request) -> Response:
+        html = render_humans_page(self._resolve_base_url(request))
+        return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
+
+    def humans_js(self, request: Request) -> Response:
+        return Response(
+            status=200,
+            body=HUMANS_JS.encode("utf-8"),
+            content_type="application/javascript; charset=utf-8",
+        )
 
     def health(self, request: Request) -> Response:
         import time

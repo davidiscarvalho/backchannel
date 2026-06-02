@@ -19,6 +19,8 @@ from backchannel.openapi import build_openapi_spec
 # are the routes we intentionally do not document in OpenAPI.
 META_ROUTES = {
     ("GET", r"^/$"),
+    ("GET", r"^/humans$"),
+    ("GET", r"^/humans\.js$"),
     ("GET", r"^/openapi\.json$"),
     ("GET", r"^/agent-guide$"),
     ("GET", r"^/ai-manifest\.json$"),
