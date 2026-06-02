@@ -7,7 +7,7 @@ Zero dependencies. Uses the native `fetch` API (Node 18+, Deno, browsers).
 ## Install
 
 ```bash
-npm install @oakstack/backchannel
+npm install @oakstack/backchannel   # NOTE: not yet published to npm — until then, build from sdk/typescript/
 ```
 
 ## Quickstart

@@ -1,8 +1,14 @@
+export interface ActorRef {
+  id: string;
+  name: string;
+}
+
 export interface Channel {
   id: string;
   name: string;
   mode: "broadcast" | "claimable";
   access: "open" | "restricted";
+  discoverable: boolean;
   description: string;
   created_at: string;
   updated_at: string;
@@ -11,13 +17,21 @@ export interface Channel {
 export interface Message {
   id: string;
   channel_id: string;
+  actor: ActorRef | null;
   content: string;
   actor_label: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   expires_at: string;
-  claimed_by_actor_id: string | null;
+  /** Self-asserted claimer label. For trustworthy identity use claimed_by_key_id. */
+  claimed_by: ActorRef | null;
+  /** Server-verified API key holding the claim. */
+  claimed_by_key_id: string | null;
+  /** Member actors named on this message (those with a webhook get a push). */
+  mentions: ActorRef[];
   claimed_at: string | null;
+  acknowledged_by?: { id: string; name: string; occurred_at: string }[];
+  active?: boolean;
 }
 
 export interface MessageEnvelope {

@@ -72,14 +72,17 @@ export class BackchannelClient {
     options: {
       mode?: "broadcast" | "claimable";
       access?: "open" | "restricted";
+      discoverable?: boolean;
       description?: string;
       webhookUrl?: string;
       webhookSecret?: string;
       idempotencyKey?: string;
     } = {}
   ): Promise<Channel> {
-    const { mode = "claimable", access = "open", description = "", webhookUrl, webhookSecret, idempotencyKey } = options;
-    const body: Record<string, unknown> = { name, mode, access, description };
+    const { mode = "claimable", access = "open", discoverable, description, webhookUrl, webhookSecret, idempotencyKey } = options;
+    const body: Record<string, unknown> = { name, mode, access };
+    if (discoverable !== undefined) body.discoverable = discoverable;
+    if (description) body.description = description;
     if (webhookUrl) body.webhook_url = webhookUrl;
     if (webhookSecret) body.webhook_secret = webhookSecret;
     const extraHeaders: Record<string, string> = {};
@@ -99,6 +102,39 @@ export class BackchannelClient {
     return res.json() as Promise<Channel>;
   }
 
+  /** List channels marked discoverable (metadata only). Returns { data, next_cursor }. */
+  async discoverChannels(options: { limit?: number; cursor?: string } = {}): Promise<MessageList> {
+    const params = new URLSearchParams();
+    if (options.limit != null) params.set("limit", String(options.limit));
+    if (options.cursor != null) params.set("cursor", options.cursor);
+    const qs = params.toString();
+    const res = await fetch(`${this.baseUrl}/v1/channels${qs ? `?${qs}` : ""}`, { headers: this.headers });
+    await raiseForStatus(res);
+    return res.json() as Promise<MessageList>;
+  }
+
+  /** Request access to a discoverable, restricted channel (owner approves). */
+  async requestAccess(channelId: string, reason = ""): Promise<Record<string, unknown>> {
+    const res = await fetch(`${this.baseUrl}/v1/channels/${channelId}/access-requests`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ reason }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<Record<string, unknown>>;
+  }
+
+  /** Register a webhook for an actor so it is pushed messages that mention it. */
+  async setActorWebhook(actorId: string, url: string, secret?: string): Promise<Record<string, unknown>> {
+    const res = await fetch(`${this.baseUrl}/v1/actors/${actorId}/webhook`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ url, secret }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<Record<string, unknown>>;
+  }
+
   // --- Messages ---
 
   async sendMessage(
@@ -108,14 +144,16 @@ export class BackchannelClient {
       actor?: string;
       actorLabel?: string;
       metadata?: Record<string, unknown>;
+      mentions?: string[];
       idempotencyKey?: string;
     } = {}
   ): Promise<Message> {
-    const { actor, actorLabel, metadata, idempotencyKey } = options;
+    const { actor, actorLabel, metadata, mentions, idempotencyKey } = options;
     const body: Record<string, unknown> = { content };
     if (actor) body.actor = actor;
     if (actorLabel) body.actor_label = actorLabel;
     if (metadata) body.metadata = metadata;
+    if (mentions) body.mentions = mentions;
     const extraHeaders: Record<string, string> = {};
     if (idempotencyKey) extraHeaders["Idempotency-Key"] = idempotencyKey;
     const res = await fetch(`${this.baseUrl}/v1/channels/${channelId}/messages`, {
@@ -130,11 +168,12 @@ export class BackchannelClient {
 
   async listMessages(
     channelId: string,
-    options: { since?: string; limit?: number } = {}
+    options: { since?: string; limit?: number; wait?: number } = {}
   ): Promise<MessageList> {
-    const { since, limit = 50 } = options;
+    const { since, limit = 50, wait } = options;
     const params = new URLSearchParams({ limit: String(limit) });
     if (since != null) params.set("since", since);
+    if (wait != null) params.set("wait", String(wait));
     const res = await fetch(`${this.baseUrl}/v1/channels/${channelId}/messages?${params}`, {
       headers: this.headers,
     });
