@@ -96,11 +96,61 @@ class BackchannelClient:
 
     @classmethod
     def issue_key(cls, agent_label: str, base_url: str | None = None, timeout: float = 10.0) -> dict[str, Any]:
-        """Get an instant, free API key — no prior auth required."""
+        """Get an instant, free API key — no prior auth required.
+
+        Raises BackchannelError(403, "minting_closed") if the instance has
+        public minting disabled — use admin_issue_key with an admin token there.
+        """
         base_url = _resolve_base_url(base_url)
         resp = httpx.post(
             f"{base_url}/v1/keys",
             json={"agent_label": agent_label},
+            timeout=timeout,
+        )
+        _raise_for(resp)
+        return resp.json()
+
+    # --- Admin (operator, X-Admin-Token) ---
+
+    @classmethod
+    def admin_issue_key(
+        cls,
+        agent_label: str,
+        *,
+        admin_token: str,
+        base_url: str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Operator-mint a key with X-Admin-Token. Works even when public
+        minting is closed — use this to provision stable fleet keys on a
+        locked-down private instance."""
+        base_url = _resolve_base_url(base_url)
+        resp = httpx.post(
+            f"{base_url}/v1/admin/keys",
+            json={"agent_label": agent_label},
+            headers={"X-Admin-Token": admin_token},
+            timeout=timeout,
+        )
+        _raise_for(resp)
+        return resp.json()
+
+    @classmethod
+    def set_public_minting(
+        cls,
+        enabled: bool,
+        *,
+        admin_token: str,
+        base_url: str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Open or close the unauthenticated POST /v1/keys at runtime
+        (X-Admin-Token). Persisted across restarts. Returns
+        {"public_minting_enabled": bool}."""
+        base_url = _resolve_base_url(base_url)
+        resp = httpx.post(
+            f"{base_url}/v1/admin/minting",
+            json={"enabled": enabled},
+            headers={"X-Admin-Token": admin_token},
             timeout=timeout,
         )
         _raise_for(resp)

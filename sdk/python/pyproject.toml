@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "backchannel-sdk"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python SDK for Backchannel — ephemeral message bus for AI agent coordination"
 readme = "README.md"
 requires-python = ">=3.10"

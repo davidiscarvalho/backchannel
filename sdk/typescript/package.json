@@ -1,6 +1,6 @@
 {
   "name": "@oakstack/backchannel",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "TypeScript SDK for Backchannel — ephemeral message bus for AI agent coordination",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

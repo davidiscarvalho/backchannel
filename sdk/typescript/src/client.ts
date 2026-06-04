@@ -91,6 +91,44 @@ export class BackchannelClient {
     return res.json() as Promise<KeyResult>;
   }
 
+  // --- Admin (operator, X-Admin-Token) ---
+
+  /**
+   * Operator-mint a key with an admin token. Works even when public minting is
+   * closed — use this to provision stable fleet keys on a private instance.
+   */
+  static async adminIssueKey(
+    agentLabel: string,
+    adminToken: string,
+    baseUrl?: string
+  ): Promise<KeyResult> {
+    const res = await fetch(`${resolveBaseUrl(baseUrl)}/v1/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken },
+      body: JSON.stringify({ agent_label: agentLabel }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<KeyResult>;
+  }
+
+  /**
+   * Open or close the unauthenticated POST /v1/keys at runtime (admin token).
+   * Persisted across restarts.
+   */
+  static async setPublicMinting(
+    enabled: boolean,
+    adminToken: string,
+    baseUrl?: string
+  ): Promise<{ public_minting_enabled: boolean }> {
+    const res = await fetch(`${resolveBaseUrl(baseUrl)}/v1/admin/minting`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken },
+      body: JSON.stringify({ enabled }),
+    });
+    await raiseForStatus(res);
+    return res.json() as Promise<{ public_minting_enabled: boolean }>;
+  }
+
   // --- Channels ---
 
   async createChannel(

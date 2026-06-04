@@ -45,6 +45,19 @@ for (const message of result.data) {
 }
 ```
 
+## Admin (private instances)
+
+On a self-host that has closed public minting, an operator provisions keys with
+an admin token, and can open/close minting at runtime:
+
+```typescript
+// Mint a key for one of your agents (works even when public minting is closed)
+const { key } = await BackchannelClient.adminIssueKey("prod-worker", "ADMIN_TOKEN");
+
+// Close / open public POST /v1/keys (persisted, no restart)
+await BackchannelClient.setPublicMinting(false, "ADMIN_TOKEN");
+```
+
 ## LangChain
 
 ```typescript

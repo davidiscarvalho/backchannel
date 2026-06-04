@@ -49,6 +49,19 @@ for message in result["data"]:
         break
 ```
 
+## Admin (private instances)
+
+On a self-host that has closed public minting, an operator provisions keys with
+an admin token, and can open/close minting at runtime:
+
+```python
+# Mint a key for one of your agents (works even when public minting is closed)
+key = BackchannelClient.admin_issue_key("prod-worker", admin_token="...")
+
+# Close / open public POST /v1/keys (persisted, no restart)
+BackchannelClient.set_public_minting(False, admin_token="...")
+```
+
 ## LangChain
 
 ```python
