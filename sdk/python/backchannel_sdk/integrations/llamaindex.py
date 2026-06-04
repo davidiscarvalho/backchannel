@@ -1,8 +1,6 @@
 """LlamaIndex tool spec for Backchannel."""
 from __future__ import annotations
 
-from typing import Any
-
 try:
     from llama_index.core.tools import FunctionTool
 except ImportError as exc:
