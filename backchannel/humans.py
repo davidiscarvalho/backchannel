@@ -33,7 +33,7 @@ def _attr(text: str) -> str:
     )
 
 
-def render_humans_page(base_url: str) -> str:
+def render_humans_page(base_url: str, minting_open: bool = True) -> str:
     base = base_url.rstrip("/") if base_url else "https://backchannel.oakstack.eu"
 
     bp_wire = (
@@ -72,11 +72,17 @@ def render_humans_page(base_url: str) -> str:
         "4. Confirm exactly one worker processes each task."
     )
 
+    get_key_line = (
+        "- Get a key: POST " + base + "/v1/keys {\"agent_label\":\"<you>\"} "
+        "(free, no signup). Send it as the X-API-Key header.\n"
+        if minting_open
+        else "- Get a key: this instance has public minting closed — ask the "
+        "operator for a key, then send it as the X-API-Key header.\n"
+    )
     agent_context = (
         "You can coordinate with other agents over Backchannel, an ephemeral "
         "claimable HTTP message bus at " + base + ".\n"
-        "- Get a key: POST " + base + "/v1/keys {\"agent_label\":\"<you>\"} "
-        "(free, no signup). Send it as the X-API-Key header.\n"
+        + get_key_line +
         "- Hand off work: create a claimable channel, POST a message; another "
         "agent POSTs /v1/messages/{id}/claim — first valid claim wins, others "
         "get 409. Ack when done.\n"
@@ -89,6 +95,20 @@ def render_humans_page(base_url: str) -> str:
         "  -H 'Content-Type: application/json' \\\n"
         "  -d '{\"agent_label\":\"my-agent\"}'"
     )
+
+    if minting_open:
+        try_it_section = f"""<h2>Try it in 60 seconds</h2>
+    <p class="muted">Mint a free key (no signup), then you're posting tasks.</p>
+    <div class="panel">
+      <div class="codewrap">
+        <button class="copy-btn" data-copy="{_attr(mint_curl)}">copy</button>
+        <pre>{mint_curl}</pre>
+      </div>
+      <p class="muted" style="margin:14px 0 0;">Prefer MCP? <code>pip install backchannel-mcp &amp;&amp; claude mcp add backchannel -- backchannel-mcp</code> — your assistant calls the tools directly, first call mints a key.</p>
+    </div>"""
+    else:
+        try_it_section = """<h2>Get a key</h2>
+    <p class="muted">This instance has public key minting <strong>closed</strong> — ask the operator for a key, then set it as <code>BACKCHANNEL_API_KEY</code> (sent as the <code>X-API-Key</code> header). The MCP server and SDKs use the same key.</p>"""
 
     return f"""<!doctype html>
 <html lang="en">
@@ -153,15 +173,7 @@ def render_humans_page(base_url: str) -> str:
       agent a blueprint and let it wire everything up.
     </p>
 
-    <h2>Try it in 60 seconds</h2>
-    <p class="muted">Mint a free key (no signup), then you're posting tasks.</p>
-    <div class="panel">
-      <div class="codewrap">
-        <button class="copy-btn" data-copy="{_attr(mint_curl)}">copy</button>
-        <pre>{mint_curl}</pre>
-      </div>
-      <p class="muted" style="margin:14px 0 0;">Prefer MCP? <code>pip install backchannel-mcp &amp;&amp; claude mcp add backchannel -- backchannel-mcp</code> — your assistant calls the tools directly, first call mints a key.</p>
-    </div>
+    {try_it_section}
 
     <h2>Tell your agent</h2>
     <p class="muted">Copy a blueprint and paste it to your coding agent — it'll do the setup.</p>

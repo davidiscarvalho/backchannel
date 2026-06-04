@@ -522,11 +522,11 @@ class BackchannelApp:
         return self.json_response(404, {"error": "not_found", "message": f"No route for {method} {path}"})
 
     def root(self, request: Request) -> Response:
-        html = render_landing_page()
+        html = render_landing_page(minting_open=self.public_minting_enabled())
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def humans(self, request: Request) -> Response:
-        html = render_humans_page(self._resolve_base_url(request))
+        html = render_humans_page(self._resolve_base_url(request), minting_open=self.public_minting_enabled())
         return Response(status=200, body=html.encode("utf-8"), content_type="text/html; charset=utf-8")
 
     def humans_js(self, request: Request) -> Response:

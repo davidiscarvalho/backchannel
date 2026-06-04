@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 
-def render_landing_page() -> str:
-    return """<!doctype html>
+def render_landing_page(minting_open: bool = True) -> str:
+    html = """<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -1104,3 +1104,15 @@ claude mcp add backchannel \
   </body>
 </html>
 """
+    if not minting_open:
+        # A-lite: on a private instance with public minting closed, swap the
+        # interactive "mint a key" bits (which would 403) for operator-issued copy.
+        html = html.replace(
+            '<button class="button primary" id="open-key-btn">Get a Test key (60 s, no signup)</button>',
+            '<a class="button primary" href="/repo/blob/main/SELF-HOST.md">Keys are operator-issued &rarr;</a>',
+        )
+        html = html.replace(
+            'No key yet? <code>POST /v1/keys</code> with <code>{"agent_label":"your-agent"}</code> — instant access, no sign-up.',
+            'Keys on this instance are issued by the operator — public minting is closed. Ask whoever runs it for a key.',
+        )
+    return html
