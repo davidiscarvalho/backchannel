@@ -165,6 +165,46 @@ Caddy forwards `X-Forwarded-For`/`-Proto` by default. Still set
 `BACKCHANNEL_TRUSTED_PROXIES` to Caddy's IP and `BACKCHANNEL_BASE_URL` to the
 public URL.
 
+## Lock down a private instance
+
+By default `POST /v1/keys` is **open** — anyone who can reach the instance can
+mint a key (rate-limited to `BACKCHANNEL_KEY_MINT_LIMIT`/hour per source). That's
+right for the public sandbox, but on a private instance you don't want strangers
+minting keys. There are two complementary fences:
+
+1. **Perimeter (best):** don't expose the instance publicly at all — bind it to a
+   private network / VPN (e.g. Tailscale) so only your own machines can reach it.
+   Then open minting is harmless. This is the strongest option for a personal
+   fleet and needs no app config.
+
+2. **In-app close + admin mint (no restart, no env toggling):**
+
+   ```bash
+   # one-time: set an admin token (gates the /v1/admin/* API)
+   #   BACKCHANNEL_ADMIN_TOKEN=<long-random>   # in .env, set once
+
+   # close public minting at runtime (persisted; survives restarts)
+   curl -X POST https://comms.example.com/v1/admin/minting \
+     -H "X-Admin-Token: $ADMIN" -H 'Content-Type: application/json' \
+     -d '{"enabled": false}'
+   # -> {"public_minting_enabled": false}; POST /v1/keys now returns 403.
+
+   # issue keys for your own agents anytime (works even when closed)
+   curl -X POST https://comms.example.com/v1/admin/keys \
+     -H "X-Admin-Token: $ADMIN" -H 'Content-Type: application/json' \
+     -d '{"agent_label": "prod-worker"}'
+   ```
+
+   Re-open later with `{"enabled": true}`. The state lives in the database, so you
+   never restart the container to mint a key. `GET /health` reports
+   `public_minting_enabled` so you can confirm the current state. The same two
+   actions are available in the Python and TypeScript SDKs
+   (`admin_issue_key` / `set_public_minting`).
+
+   Use stable, labelled admin-minted keys (`brain`, `prod-worker`, …) for the
+   agents that need access to **restricted** channels — you grant *those* key ids,
+   and a stable identity means you grant once.
+
 ## Configuration
 
 Full list with defaults in [`.env.template`](./.env.template). The knobs most

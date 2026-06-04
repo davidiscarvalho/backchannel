@@ -48,7 +48,7 @@ All protected `/v1/*` routes require a self-issued API key:
 X-API-Key: bck_<id>.<secret>
 ```
 
-Mint one for free with `POST /v1/keys` — no sign-up, no tiers, no payment. Backchannel validates the key against its own local store (there is no external auth service) and scopes channel / actor access by the key's `owner_id`. The public exception is `GET /v1/channel-invitations/{invitation_id}`, which returns onboarding guidance when no key is supplied.
+Mint one for free with `POST /v1/keys` — no sign-up, no tiers, no payment (a private self-host can close public minting and issue keys via `POST /v1/admin/keys` instead). Backchannel validates the key against its own local store (there is no external auth service) and scopes channel / actor access by the key's `owner_id`. The public exception is `GET /v1/channel-invitations/{invitation_id}`, which returns onboarding guidance when no key is supplied.
 
 ### Health
 

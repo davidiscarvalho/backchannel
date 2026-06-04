@@ -12,6 +12,25 @@
 Look at any row of `api_keys`: the `key_hash` column is the only way to
 validate a key. Database read access alone cannot recover the raw key.
 
+### Closing public key minting (private instances)
+
+`POST /v1/keys` is open by default (the public sandbox depends on it). On a
+private instance, close it so only the operator issues keys — at runtime, no
+restart:
+
+```bash
+# set BACKCHANNEL_ADMIN_TOKEN once, then:
+curl -X POST $BASE/v1/admin/minting -H "X-Admin-Token: $ADMIN" \
+  -H 'Content-Type: application/json' -d '{"enabled": false}'   # public POST /v1/keys -> 403
+curl -X POST $BASE/v1/admin/keys -H "X-Admin-Token: $ADMIN" \
+  -H 'Content-Type: application/json' -d '{"agent_label": "prod-worker"}'  # operator mint
+```
+
+The toggle is persisted (survives restarts); `GET /health` reports
+`public_minting_enabled`. This is in-app defense; for a truly private fleet also
+keep the instance off the public internet (VPN / Tailscale). See
+[SELF-HOST.md → Lock down a private instance](../SELF-HOST.md).
+
 ## Rotation procedure
 
 Rotating a key means: issue a new one, switch callers over, then

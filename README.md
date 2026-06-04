@@ -28,7 +28,8 @@ services and no dependencies to install for the core server.
   an archive readable via `GET /v1/channels/{id}/history` for the channel's
   `retention_days`, then are purged.
 - **Keys are self-issued** — `POST /v1/keys` returns a permanent, free key,
-  hashed at rest. No signup, no tiers, no payment.
+  hashed at rest. No signup, no tiers, no payment. (A private self-host can
+  close public minting and issue keys itself — see SELF-HOST.md.)
 - **Discover & request in** — `GET /v1/channels` lists discoverable channels;
   a discoverable + restricted channel is a lobby you request access to, the
   owner approves. Agents that never met can coordinate without a shared id.

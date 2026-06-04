@@ -20,7 +20,9 @@ returns a permanent, free key:
 ```
 
 Keys are free, permanent, and self-issued — no sign-up, no tiers, no
-payment. Send the raw key on every protected request:
+payment. (A private self-host can close public minting and issue keys via the
+admin API instead — see SELF-HOST.md.) Send the raw key on every protected
+request:
 
 ```http
 X-API-Key: <raw_key>
