@@ -253,6 +253,8 @@ class BackchannelApp:
             ("GET", re.compile(r"^/v1/security/audit$"), True, self.security_audit),
             ("POST", re.compile(r"^/v1/admin/channels/(?P<identifier>[^/]+)/pause$"), False, self.admin_pause_channel),
             ("POST", re.compile(r"^/v1/admin/channels/(?P<identifier>[^/]+)/resume$"), False, self.admin_resume_channel),
+            ("POST", re.compile(r"^/v1/admin/keys$"), False, self.admin_issue_key),
+            ("POST", re.compile(r"^/v1/admin/minting$"), False, self.admin_set_minting),
         ]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
@@ -365,6 +367,11 @@ class BackchannelApp:
         return raw
 
     _HOST_RE = re.compile(r"^[A-Za-z0-9._\-]+(:[0-9]{1,5})?$")
+
+    # Persisted setting gating the unauthenticated POST /v1/keys. Default open
+    # (the public showroom relies on it); a private self-host closes it at
+    # runtime via POST /v1/admin/minting — no restart.
+    _PUBLIC_MINTING_SETTING = "public_minting_enabled"
 
     def _resolve_host(self, environ: dict[str, Any]) -> str:
         """The host the client reached us on. Honors X-Forwarded-Host behind a
@@ -541,6 +548,7 @@ class BackchannelApp:
             "db_latency_ms": db_latency_ms,
             "api_version": "1.0",
             "instance_kind": self.instance_kind,
+            "public_minting_enabled": self.public_minting_enabled(),
             "status_url": f"{base}/docs/reliability.md",
         })
 
@@ -857,7 +865,12 @@ Allow: /
                 "type": "api_key",
                 "header": "X-API-Key",
                 "obtain_url": f"{base}/v1/keys",
-                "obtain_description": "POST /v1/keys with {\"agent_label\": \"...\"} → permanent key, no signup. Free. The public instance is rate-limited; self-host for more.",
+                "obtain_description": (
+                    "POST /v1/keys with {\"agent_label\": \"...\"} → permanent key, no signup. Free. The public instance is rate-limited; self-host for more."
+                    if self.public_minting_enabled()
+                    else "Key minting is closed on this instance — ask the operator for a key (operators issue them via POST /v1/admin/keys with X-Admin-Token)."
+                ),
+                "public_minting_enabled": self.public_minting_enabled(),
             },
             "transports": {
                 "http": {"openapi_url": f"{base}/openapi.json"},
@@ -1371,18 +1384,14 @@ DEPRECATED (still work, but avoid in new code): /v1/tasks/claim-and-ack,
         invitation = self.store.revoke_channel_invitation(invitation_id, key_id=request.auth.key_id)
         return self.json_response(200, invitation)
 
-    def issue_key(self, request: Request) -> Response:
-        """Issue a permanent API key. No signup, no tiers, no payment.
+    def public_minting_enabled(self) -> bool:
+        """Whether the unauthenticated POST /v1/keys is open on this instance."""
+        return self.store.get_bool_setting(self._PUBLIC_MINTING_SETTING, True)
 
-        On the public test instance the key carries a per-key rate limit
-        (BACKCHANNEL_RATE_LIMIT, default 120 requests/60s) — it's a sandbox,
-        not a production backend. Self-hosters raise the limit or run unlimited.
-        """
-        self.key_issuance_rate_limiter.check(request.remote_addr)
-        body = request.json()
-        agent_label = body.get("agent_label", "")
-        if not isinstance(agent_label, str) or not agent_label.strip():
-            raise APIError(422, "missing_field", "'agent_label' is required")
+    def _mint_key(self, agent_label: str, remote_addr: str | None, *, via_admin: bool = False) -> dict[str, Any]:
+        """Create a permanent free API key and return the issuance payload.
+        Shared by the public (POST /v1/keys) and operator (POST /v1/admin/keys)
+        paths; the caller is responsible for any gating before calling this."""
         agent_label = agent_label.strip()[:128]
         key_id, _secret, raw_key = mint_raw_key()
         self.store.issue_api_key(
@@ -1394,22 +1403,67 @@ DEPRECATED (still work, but avoid in new code): /v1/tasks/claim-and-ack,
             ttl_seconds=None,  # permanent
         )
         self.store.record_security_event(
-            event_type="key.issue",
+            event_type="key.issue.admin" if via_admin else "key.issue",
             subject_key_id=key_id,
-            remote_addr=request.remote_addr,
+            remote_addr=remote_addr,
             detail={"agent_label": agent_label},
         )
-        return self.json_response(
-            201,
-            {
-                "key": raw_key,
-                "key_id": key_id,
-                "expires_at": None,
-                "agent_label": agent_label,
-                "rate_limit": self.rate_limit,
-                "rate_limit_window_seconds": self.rate_limit_window,
-            },
+        return {
+            "key": raw_key,
+            "key_id": key_id,
+            "expires_at": None,
+            "agent_label": agent_label,
+            "rate_limit": self.rate_limit,
+            "rate_limit_window_seconds": self.rate_limit_window,
+        }
+
+    def issue_key(self, request: Request) -> Response:
+        """Issue a permanent API key. No signup, no tiers, no payment.
+
+        Open by default. A private self-host can close this with
+        POST /v1/admin/minting {"enabled": false} — then this returns 403 and
+        the operator issues keys via POST /v1/admin/keys instead. The key
+        carries a per-key rate limit (BACKCHANNEL_RATE_LIMIT, default 120/60s).
+        """
+        if not self.public_minting_enabled():
+            raise APIError(
+                403,
+                "minting_closed",
+                "Public key minting is disabled on this instance. Ask the operator for a key.",
+            )
+        self.key_issuance_rate_limiter.check(request.remote_addr)
+        body = request.json()
+        agent_label = body.get("agent_label", "")
+        if not isinstance(agent_label, str) or not agent_label.strip():
+            raise APIError(422, "missing_field", "'agent_label' is required")
+        return self.json_response(201, self._mint_key(agent_label, request.remote_addr))
+
+    def admin_issue_key(self, request: Request) -> Response:
+        """Operator-issued key (X-Admin-Token). Works regardless of whether
+        public minting is open — this is how a locked-down private instance
+        provisions stable fleet keys."""
+        self._require_admin(request)
+        body = request.json()
+        agent_label = body.get("agent_label", "")
+        if not isinstance(agent_label, str) or not agent_label.strip():
+            raise APIError(422, "missing_field", "'agent_label' is required")
+        return self.json_response(201, self._mint_key(agent_label, request.remote_addr, via_admin=True))
+
+    def admin_set_minting(self, request: Request) -> Response:
+        """Toggle the unauthenticated POST /v1/keys at runtime (X-Admin-Token).
+        Persisted in the store — survives restarts, no container reboot."""
+        self._require_admin(request)
+        body = request.json()
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            raise APIError(422, "invalid_field", "'enabled' must be true or false")
+        self.store.set_bool_setting(self._PUBLIC_MINTING_SETTING, enabled)
+        self.store.record_security_event(
+            event_type="minting.toggle",
+            remote_addr=request.remote_addr,
+            detail={"public_minting_enabled": enabled},
         )
+        return self.json_response(200, {"public_minting_enabled": enabled})
 
     # --- agent-verb route aliases (B1) -------------------------------
 

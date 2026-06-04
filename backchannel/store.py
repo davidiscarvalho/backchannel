@@ -587,7 +587,43 @@ class BackchannelStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_security_audit_actor ON security_audit(actor_key_id)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
+
+    # --- instance settings (persisted key/value) --------------------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        """Read a persisted instance setting, or `default` if unset."""
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Write a persisted instance setting (upsert)."""
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            conn.commit()
+
+    def get_bool_setting(self, key: str, default: bool) -> bool:
+        """Read a boolean setting stored as 'true'/'false'."""
+        raw = self.get_setting(key, None)
+        if raw is None:
+            return default
+        return raw.strip().lower() == "true"
+
+    def set_bool_setting(self, key: str, value: bool) -> None:
+        self.set_setting(key, "true" if value else "false")
 
     # --- security audit log -----------------------------------------
 

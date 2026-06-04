@@ -1025,7 +1025,7 @@ def build_openapi_spec(onboarding_url: str | None = "", base_url: str = "") -> d
                                 },
                             }}},
                         },
-                        **errors(409, 422, 429),
+                        **errors(403, 409, 422, 429),
                     },
                 }
             },
@@ -1764,6 +1764,80 @@ def build_openapi_spec(onboarding_url: str | None = "", base_url: str = "") -> d
                     {"name": "X-Admin-Token", "in": "header", "required": True, "schema": {"type": "string"}},
                 ],
                 "responses": {"200": {"description": "Resumed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Channel"}}}}, **errors(401, 403, 404)},
+            }
+        },
+        "/v1/admin/keys": {
+            "post": {
+                "summary": "Issue an API key (admin only)",
+                "description": (
+                    "Mints a permanent free key regardless of whether public minting is open. "
+                    "Requires X-Admin-Token. Operators use this to provision stable keys for their "
+                    "own agents on a locked-down private instance (e.g. after closing public minting)."
+                ),
+                "operationId": "adminIssueKey",
+                "tags": ["Admin"],
+                "security": [],
+                "parameters": [
+                    {"name": "X-Admin-Token", "in": "header", "required": True, "schema": {"type": "string"}, "description": "Must match the server's BACKCHANNEL_ADMIN_TOKEN env var."},
+                ],
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["agent_label"],
+                        "properties": {"agent_label": {"type": "string", "example": "prod-worker"}},
+                    },
+                    example={"agent_label": "prod-worker"},
+                ),
+                "responses": {
+                    "201": {
+                        "description": "Key issued",
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "key": {"type": "string", "example": "bck_01abc123.secret"},
+                                "key_id": {"type": "string"},
+                                "expires_at": {"type": ["string", "null"], "description": "Always null — keys are permanent."},
+                                "agent_label": {"type": "string"},
+                                "rate_limit": {"type": "integer"},
+                            },
+                        }}},
+                    },
+                    **errors(401, 403, 409, 422),
+                },
+            }
+        },
+        "/v1/admin/minting": {
+            "post": {
+                "summary": "Open or close public key minting (admin only)",
+                "description": (
+                    "Toggles the unauthenticated POST /v1/keys at runtime; persisted across restarts "
+                    "(no container reboot). Set enabled=false on a private instance so only the operator "
+                    "can issue keys (via POST /v1/admin/keys). Requires X-Admin-Token."
+                ),
+                "operationId": "adminSetMinting",
+                "tags": ["Admin"],
+                "security": [],
+                "parameters": [
+                    {"name": "X-Admin-Token", "in": "header", "required": True, "schema": {"type": "string"}, "description": "Must match the server's BACKCHANNEL_ADMIN_TOKEN env var."},
+                ],
+                **json_body(
+                    {
+                        "type": "object",
+                        "required": ["enabled"],
+                        "properties": {"enabled": {"type": "boolean", "description": "true = open public minting; false = close it (operator-only)."}},
+                    },
+                    example={"enabled": False},
+                ),
+                "responses": {
+                    "200": {
+                        "description": "Updated",
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {"public_minting_enabled": {"type": "boolean"}},
+                        }}},
+                    },
+                    **errors(401, 403, 422),
+                },
             }
         },
     }
